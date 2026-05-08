@@ -31,7 +31,7 @@ async def reclassify_null_categories(batch_size: int = 100,
     so the FastAPI event loop stays responsive on Render's small CPU.
     """
     # Belt-and-suspenders: ensure V12 columns exist before SELECT.
-    _ensure_event_v12_columns()
+    await _ensure_event_v12_columns()
     # Defer slightly so the rest of startup completes first.
     await asyncio.sleep(8)
 

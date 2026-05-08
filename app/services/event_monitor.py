@@ -77,7 +77,7 @@ async def _run_once(notifier, full_scan: bool = False) -> None:
     TELEGRAM_CHAT_ID = _cid()
     new_events = []
     for ev in enriched:
-        is_new = upsert_event(ev["slug"], ev)
+        is_new = await upsert_event(ev["slug"], ev)
         if is_new:
             new_events.append(ev)
 

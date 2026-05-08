@@ -75,10 +75,10 @@ def _has_live_sale(tickets: list[dict]) -> bool:
     return False
 
 
-def _refresh_watch_list() -> None:
+async def _refresh_watch_list() -> None:
     """Scan storage for slugs that look like pre-sale; populate _state."""
     try:
-        events = list_recent_events(limit=200, only_available=False,
+        events = await list_recent_events(limit=200, only_available=False,
                                      hide_ended=True)
     except Exception as e:
         log.debug(f"watchlist scan failed: {e}")
@@ -97,7 +97,7 @@ def _refresh_watch_list() -> None:
             continue
         # Inspect cached tickets payload (denormalized JSON)
         try:
-            cached = get_event(slug) or {}
+            cached = await get_event(slug) or {}
             tickets = cached.get("tickets") or []
         except Exception:
             tickets = []
@@ -175,7 +175,7 @@ async def _alert_sale_open(slug: str, data: dict, notifier) -> None:
 
 async def pre_sale_probe_loop(notifier) -> None:
     """Background entry point — runs forever (cancelled at shutdown)."""
-    _ensure_event_v12_columns()
+    await _ensure_event_v12_columns()
     log.info("🔭 pre-sale probe started (interval=%.0fs, cap=%d)",
              PROBE_INTERVAL, MAX_WATCHED_SLUGS)
 
@@ -184,7 +184,7 @@ async def pre_sale_probe_loop(notifier) -> None:
 
     while True:
         try:
-            _refresh_watch_list()
+            await _refresh_watch_list()
             if not _state:
                 await asyncio.sleep(QUIET_BACKOFF)
                 continue

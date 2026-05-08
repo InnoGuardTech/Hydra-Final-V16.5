@@ -84,7 +84,7 @@ async def _opportunistic_capture(notifier) -> None:
     capture path immediately — do NOT wait for a WS drop event that may
     never come (seats were free all along).
     """
-    watchers = list_drop_watchers(status="watching")
+    watchers = await list_drop_watchers(status="watching")
     if not watchers:
         return
 
@@ -129,7 +129,7 @@ async def _opportunistic_capture(notifier) -> None:
 
 
 async def _reconcile(notifier) -> None:
-    watchers = list_drop_watchers(status="watching")
+    watchers = await list_drop_watchers(status="watching")
     if not watchers:
         # No active watchers — close any leftover WS
         for ek, t in list(_WS_TASKS.items()):
@@ -142,7 +142,7 @@ async def _reconcile(notifier) -> None:
     fresh: list[dict] = []
     for w in watchers:
         if float(w.get("created_at") or 0) < cutoff:
-            set_drop_watcher_status(w["id"], "expired")
+            await set_drop_watcher_status(w["id"], "expired")
             continue
         fresh.append(w)
 
@@ -258,7 +258,7 @@ async def _try_capture(event_key: str, notifier) -> None:
     if lock.locked():
         return  # avoid stampede on burst events
     async with lock:
-        watchers = list_drop_watchers(status="watching", event_key=event_key)
+        watchers = await list_drop_watchers(status="watching", event_key=event_key)
         if not watchers:
             return
 
@@ -343,12 +343,12 @@ async def _capture_one(client: SeatsioClient, watcher: dict,
         return
 
     # Success!
-    set_drop_watcher_status(watcher["id"], "captured")
-    mark_account_used(watcher["account_id"])
-    acc = get_account(watcher["account_id"]) or {}
+    await set_drop_watcher_status(watcher["id"], "captured")
+    await mark_account_used(watcher["account_id"])
+    acc = await get_account(watcher["account_id"]) or {}
     label = acc.get("label") or acc.get("email") or watcher["account_id"]
 
-    add_booking(
+    await add_booking(
         chat_id=watcher["chat_id"],
         event_slug=watcher["event_slug"],
         event_title=watcher["event_slug"],
