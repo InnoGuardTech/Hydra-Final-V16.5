@@ -11,6 +11,7 @@ TELEGRAM_CHAT_ID, WEBOOK_PUBLIC_TOKEN, …) prefer the helper functions
 below over reading the module-level constants — they pick up DB updates
 made via the admin UI without a restart.
 """
+import os
 from __future__ import annotations
 
 import os
@@ -90,13 +91,10 @@ def telegram_chat_id() -> str:
     return _env_or("TELEGRAM_CHAT_ID", "")
 
 
-def authorized_chat_ids() -> list[str]:
-    raw = _env_or("AUTHORIZED_CHAT_IDS", "")
-    ids = [c.strip() for c in raw.split(",") if c.strip()]
-    main = telegram_chat_id()
-    if main and main not in ids:
-        ids.append(main)
-    return ids
+def authorized_chat_ids():
+    # الآن السيرفر يقرأ الـ IDs من إعدادات Railway مباشرة بدون تعطيل الإقلاع
+    raw = os.getenv("AUTHORIZED_CHAT_IDS", "")
+    return [c.strip() for c in raw.split(",") if c.strip()]
 
 
 # V13 hardening: NO default values for sensitive secrets.
