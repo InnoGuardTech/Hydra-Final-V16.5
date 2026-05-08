@@ -20,7 +20,7 @@ import os
 import re
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Iterable, Optional
 
 
@@ -344,17 +344,57 @@ class _TursoConn:
 from app.core.config import DB_PATH  # noqa: E402
 
 
-from contextlib import asynccontextmanager
-from app.core.config import DB_PATH  # noqa: E402
-
 @asynccontextmanager
 async def connect():
-    """Yield an async connection from the pool. Thread-safe."""
+    """Yield an async connection from the pool (async callers). Thread-safe."""
     global _pg_pool_async, _turso_client
     if _pg_pool_async is not None:
         async with _pg_pool_async.acquire() as conn:
             yield conn
     elif _turso_client is not None:
+        con = _TursoConn(_turso_client)
+        try:
+            yield con
+            con.commit()
+        finally:
+            con.close()
+    else:
+        con = sqlite3.connect(DB_PATH, timeout=10)
+        con.row_factory = sqlite3.Row
+        try:
+            yield con
+            con.commit()
+        finally:
+            con.close()
+
+
+@contextmanager
+def connect_sync():
+    """Yield a synchronous connection (sync callers such as settings.py).
+
+    For PostgreSQL the pool is not yet available at import time, so we
+    open a direct psycopg2 connection.  For Turso and SQLite we reuse
+    the existing wrapper classes.
+    """
+    global _pg_pool, _turso_client
+    if PG_URL:
+        try:
+            import psycopg2
+            import psycopg2.extras
+            raw = psycopg2.connect(PG_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+            con = _PgConn(raw)
+            try:
+                yield con
+                con.commit()
+            finally:
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+            return
+        except Exception as e:
+            log.warning("[db] connect_sync pg fallback to sqlite: %s", str(e)[:120])
+    if _turso_client is not None:
         con = _TursoConn(_turso_client)
         try:
             yield con

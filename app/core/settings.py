@@ -21,7 +21,7 @@ import time
 from threading import RLock
 from typing import Any
 
-from app.core.db import connect
+from app.core.db import connect_sync as connect
 
 log = logging.getLogger("settings")
 
