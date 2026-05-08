@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID, WEBOOK_PUBLIC_TOKEN, …) prefer the helper functions
 below over reading the module-level constants — they pick up DB updates
 made via the admin UI without a restart.
 """
-import os
+
 from __future__ import annotations
 
 import os
