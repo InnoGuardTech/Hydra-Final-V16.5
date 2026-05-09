@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+import time
 from typing import Any, Optional
 
 from app.core.db import backend as _backend, connect as _conn
@@ -18,9 +18,9 @@ _V12_COLUMNS = (
     ("has_availability", "INTEGER DEFAULT 1",    "INTEGER DEFAULT 1"),
     ("sub_title",        "TEXT",                 "TEXT"),
     ("venue",            "TEXT",                 "TEXT"),
-    ("first_seen_at",    "TIMESTAMPTZ",          "REAL"),
-    ("last_seen_at",     "TIMESTAMPTZ",          "REAL"),
-    ("last_checked_at",  "TIMESTAMPTZ",          "REAL"),
+    ("first_seen_at",    "DOUBLE PRECISION",     "REAL"),
+    ("last_seen_at",     "DOUBLE PRECISION",     "REAL"),
+    ("last_checked_at",  "DOUBLE PRECISION",     "REAL"),
 )
 
 _V14_ACCOUNT_COLUMNS = (("proxy_url", "TEXT", "TEXT"),)
@@ -61,13 +61,13 @@ async def _ensure_event_v12_columns() -> None:
 async def init_db() -> None:
     async with _conn() as con:
         queries = [
-            """CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, label TEXT, email TEXT NOT NULL, password TEXT NOT NULL, access_token TEXT, refresh_token TEXT, token_expires_at REAL DEFAULT 0, user_id TEXT, status TEXT DEFAULT 'new', last_used_at TIMESTAMPTZ, tickets_booked INTEGER DEFAULT 0, last_error TEXT, created_at TIMESTAMPTZ)""",
-            """CREATE TABLE IF NOT EXISTS events (slug TEXT PRIMARY KEY, title TEXT, category TEXT, royal_category TEXT, city TEXT, url TEXT, start_date INTEGER, end_date INTEGER DEFAULT 0, is_seated INTEGER DEFAULT 0, has_availability INTEGER DEFAULT 1, sub_title TEXT, venue TEXT, poster TEXT, tickets_json TEXT, first_seen_at TIMESTAMPTZ, last_seen_at TIMESTAMPTZ, last_checked_at TIMESTAMPTZ)""",
-            """CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, chat_id TEXT, event_slug TEXT, event_title TEXT, ticket_type TEXT, account_id TEXT, quantity INTEGER, seat_info TEXT, payment_url TEXT, total_amount REAL, currency TEXT, status TEXT, created_at TIMESTAMPTZ)""",
-            """CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMPTZ, updated_by TEXT)""",
-            """CREATE TABLE IF NOT EXISTS event_blocks (id SERIAL PRIMARY KEY, chat_id TEXT, event_slug TEXT, ticket_type_id TEXT, primary_block TEXT, backup_blocks TEXT, quantity INTEGER, payment_method TEXT DEFAULT 'credit_card', created_at TIMESTAMPTZ)""",
-            """CREATE TABLE IF NOT EXISTS drop_watchers (id SERIAL PRIMARY KEY, chat_id TEXT, account_id TEXT, event_slug TEXT, event_key TEXT, ticket_type_id TEXT, quantity INTEGER, blocks_pref TEXT, status TEXT DEFAULT 'watching', created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)""",
-            """CREATE TABLE IF NOT EXISTS seat_maps (chart_key TEXT PRIMARY KEY, event_key TEXT, rendering_info TEXT, blocks_meta TEXT, updated_at TIMESTAMPTZ)""",
+            """CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, label TEXT, email TEXT NOT NULL, password TEXT NOT NULL, access_token TEXT, refresh_token TEXT, token_expires_at REAL DEFAULT 0, user_id TEXT, status TEXT DEFAULT 'new', last_used_at REAL DEFAULT 0, tickets_booked INTEGER DEFAULT 0, last_error TEXT, created_at REAL)""",
+            """CREATE TABLE IF NOT EXISTS events (slug TEXT PRIMARY KEY, title TEXT, category TEXT, royal_category TEXT, city TEXT, url TEXT, start_date INTEGER, end_date INTEGER DEFAULT 0, is_seated INTEGER DEFAULT 0, has_availability INTEGER DEFAULT 1, sub_title TEXT, venue TEXT, poster TEXT, tickets_json TEXT, first_seen_at REAL, last_seen_at REAL, last_checked_at REAL)""",
+            """CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, chat_id TEXT, event_slug TEXT, event_title TEXT, ticket_type TEXT, account_id TEXT, quantity INTEGER, seat_info TEXT, payment_url TEXT, total_amount REAL, currency TEXT, status TEXT, created_at REAL)""",
+            """CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT, updated_at REAL, updated_by TEXT)""",
+            """CREATE TABLE IF NOT EXISTS event_blocks (id SERIAL PRIMARY KEY, chat_id TEXT, event_slug TEXT, ticket_type_id TEXT, primary_block TEXT, backup_blocks TEXT, quantity INTEGER, payment_method TEXT DEFAULT 'credit_card', created_at REAL)""",
+            """CREATE TABLE IF NOT EXISTS drop_watchers (id SERIAL PRIMARY KEY, chat_id TEXT, account_id TEXT, event_slug TEXT, event_key TEXT, ticket_type_id TEXT, quantity INTEGER, blocks_pref TEXT, status TEXT DEFAULT 'watching', created_at REAL, updated_at REAL)""",
+            """CREATE TABLE IF NOT EXISTS seat_maps (chart_key TEXT PRIMARY KEY, event_key TEXT, rendering_info TEXT, blocks_meta TEXT, updated_at REAL)""",
             "CREATE INDEX IF NOT EXISTS idx_events_last_seen ON events(last_seen_at)",
             "CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status)",
             "CREATE INDEX IF NOT EXISTS idx_dropwatch_status ON drop_watchers(status)"
@@ -84,7 +84,7 @@ async def upsert_account(account_id: str, email: str, password: str, label: str 
         await con.execute("""
             INSERT INTO accounts (id, label, email, password, status, created_at) VALUES ($1, $2, $3, $4, 'new', $5)
             ON CONFLICT(id) DO UPDATE SET label = EXCLUDED.label, email = EXCLUDED.email, password = EXCLUDED.password
-        """, account_id, label or email.split("@")[0], email, password, datetime.now(timezone.utc))
+        """, account_id, label or email.split("@")[0], email, password, time.time())
 
 async def save_tokens(account_id: str, access: str, refresh: str, expires_at: float, user_id: Optional[str] = None) -> None:
     async with _conn() as con:
@@ -96,7 +96,7 @@ async def set_account_status(account_id: str, status: str, error: Optional[str] 
 
 async def mark_account_used(account_id: str) -> None:
     async with _conn() as con:
-        await con.execute("UPDATE accounts SET last_used_at = $1, tickets_booked = tickets_booked + 1 WHERE id = $2", datetime.now(timezone.utc), account_id)
+        await con.execute("UPDATE accounts SET last_used_at = $1, tickets_booked = tickets_booked + 1 WHERE id = $2", time.time(), account_id)
 
 async def get_account(account_id: str) -> Optional[dict[str, Any]]:
     async with _conn() as con:
@@ -119,7 +119,7 @@ async def delete_account(account_id: str) -> None:
 # Events
 # ════════════════════════════════════════════════════════════════════════
 async def upsert_event(slug: str, data: dict[str, Any]) -> bool:
-    now = datetime.now(timezone.utc)
+    now = time.time()
     await _ensure_event_v12_columns()
     async with _conn() as con:
         cur = await con.fetchrow("SELECT 1 FROM events WHERE slug = $1", slug)
@@ -132,7 +132,7 @@ async def upsert_event(slug: str, data: dict[str, Any]) -> bool:
         return is_new
 
 async def purge_ended_events(grace_seconds: int = 3600) -> int:
-    cutoff = datetime.now(timezone.utc).timestamp() - grace_seconds
+    cutoff = time.time() - grace_seconds
     async with _conn() as con:
         res = await con.execute("DELETE FROM events WHERE end_date IS NOT NULL AND end_date > 0 AND end_date < $1", cutoff)
         return int(res.split()[-1]) if res else 0
@@ -149,7 +149,7 @@ async def get_event(slug: str) -> Optional[dict[str, Any]]:
 async def list_recent_events(limit: int = 200, royal_category: Optional[str] = None, only_available: bool = True, hide_ended: bool = True) -> list[dict[str, Any]]:
     where, params, idx = [], [], 1
     if hide_ended:
-        now = datetime.now(timezone.utc).timestamp()
+        now = time.time()
         where.append(f"(end_date IS NULL OR end_date = 0 OR end_date > ${idx} OR (start_date IS NOT NULL AND start_date > ${idx+1}))")
         params.extend([now - 3600, now - 6 * 3600])
         idx += 2
@@ -171,7 +171,7 @@ async def list_recent_events(limit: int = 200, royal_category: Optional[str] = N
 async def count_events_by_royal_category(only_available: bool = True, hide_ended: bool = True) -> dict[str, int]:
     where, params, idx = [], [], 1
     if hide_ended:
-        now = datetime.now(timezone.utc).timestamp()
+        now = time.time()
         where.append(f"(end_date IS NULL OR end_date = 0 OR end_date > ${idx} OR (start_date IS NOT NULL AND start_date > ${idx+1}))")
         params.extend([now - 3600, now - 6 * 3600])
         idx += 2
@@ -195,9 +195,8 @@ async def count_events_by_royal_category(only_available: bool = True, hide_ended
 # ════════════════════════════════════════════════════════════════════════
 # Bookings, Settings & Watchers
 # ════════════════════════════════════════════════════════════════════════
-async def add_booking(chat_id: str, event_slug: str, event_title: str, ticket_type: str, account_id: str, quantity: int, seat_info: dict, payment_url: str, total_amount: float = 0.0, currency: str = "SAR", status: str = "pending") -> int:
     async with _conn() as con:
-        row = await con.fetchrow("INSERT INTO bookings (chat_id, event_slug, event_title, ticket_type, account_id, quantity, seat_info, payment_url, total_amount, currency, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id", chat_id, event_slug, event_title, ticket_type, account_id, quantity, json.dumps(seat_info, ensure_ascii=False), payment_url, total_amount, currency, status, datetime.now(timezone.utc))
+        row = await con.fetchrow("INSERT INTO bookings (chat_id, event_slug, event_title, ticket_type, account_id, quantity, seat_info, payment_url, total_amount, currency, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id", chat_id, event_slug, event_title, ticket_type, account_id, quantity, json.dumps(seat_info, ensure_ascii=False), payment_url, total_amount, currency, status, time.time())
         return row["id"]
 
 async def list_bookings(chat_id: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -212,10 +211,8 @@ async def list_bookings(chat_id: Optional[str] = None, limit: int = 20) -> list[
             out.append(d)
         return out
 
-async def add_drop_watcher(*, chat_id: str, account_id: str, event_slug: str, event_key: str, ticket_type_id: str, quantity: int, blocks_pref: list[str]) -> int:
     async with _conn() as con:
-        now = datetime.now(timezone.utc)
-        row = await con.fetchrow("INSERT INTO drop_watchers (chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, blocks_pref, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'watching', $8, $9) RETURNING id", chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, json.dumps(blocks_pref, ensure_ascii=False), now, now)
+        row = await con.fetchrow("INSERT INTO drop_watchers (chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, blocks_pref, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'watching', $8, $9) RETURNING id", chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, json.dumps(blocks_pref, ensure_ascii=False), time.time(), time.time())
         return row["id"]
 
 async def list_drop_watchers(status: Optional[str] = "watching", event_key: Optional[str] = None) -> list[dict[str, Any]]:
@@ -241,16 +238,16 @@ async def list_drop_watchers(status: Optional[str] = "watching", event_key: Opti
 
 async def set_drop_watcher_status(watcher_id: int, status: str) -> None:
     async with _conn() as con:
-        await con.execute("UPDATE drop_watchers SET status = $1, updated_at = $2 WHERE id = $3", status, datetime.now(timezone.utc), int(watcher_id))
+        await con.execute("UPDATE drop_watchers SET status = $1, updated_at = $2 WHERE id = $3", status, time.time(), int(watcher_id))
 
 async def cancel_drop_watchers(chat_id: str) -> int:
     async with _conn() as con:
-        res = await con.execute("UPDATE drop_watchers SET status='cancelled', updated_at=$1 WHERE chat_id = $2 AND status='watching'", datetime.now(timezone.utc), chat_id)
+        res = await con.execute("UPDATE drop_watchers SET status='cancelled', updated_at=$1 WHERE chat_id = $2 AND status='watching'", time.time(), chat_id)
         return int(res.split()[-1]) if res else 0
 
 async def set_bot_setting(key: str, value: str, updated_by: str = "admin") -> None:
     async with _conn() as con:
-        await con.execute("INSERT INTO bot_settings (key, value, updated_at, updated_by) VALUES ($1, $2, $3, $4) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by", key, value, datetime.now(timezone.utc), updated_by)
+        await con.execute("INSERT INTO bot_settings (key, value, updated_at, updated_by) VALUES ($1, $2, $3, $4) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by", key, value, time.time(), updated_by)
 
 async def get_bot_setting(key: str, default: str = "") -> str:
     async with _conn() as con:
@@ -264,7 +261,7 @@ async def list_bot_settings() -> dict[str, str]:
 
 async def save_event_blocks(*, chat_id: str, event_slug: str, ticket_type_id: str, primary_block: str, backup_blocks: list[str], quantity: int, payment_method: str = "credit_card") -> int:
     async with _conn() as con:
-        row = await con.fetchrow("INSERT INTO event_blocks (chat_id, event_slug, ticket_type_id, primary_block, backup_blocks, quantity, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id", chat_id, event_slug, ticket_type_id, primary_block, json.dumps(backup_blocks, ensure_ascii=False), quantity, payment_method, datetime.now(timezone.utc))
+        row = await con.fetchrow("INSERT INTO event_blocks (chat_id, event_slug, ticket_type_id, primary_block, backup_blocks, quantity, payment_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id", chat_id, event_slug, ticket_type_id, primary_block, json.dumps(backup_blocks, ensure_ascii=False), quantity, payment_method, time.time())
         return row["id"]
 
 async def get_event_blocks(blocks_id: int) -> Optional[dict[str, Any]]:
@@ -278,21 +275,14 @@ async def get_event_blocks(blocks_id: int) -> Optional[dict[str, Any]]:
 
 async def save_seat_map(*, chart_key: str, event_key: str, rendering_info: dict, blocks_meta: list[dict]) -> None:
     async with _conn() as con:
-        await con.execute("INSERT INTO seat_maps (chart_key, event_key, rendering_info, blocks_meta, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(chart_key) DO UPDATE SET event_key = EXCLUDED.event_key, rendering_info = EXCLUDED.rendering_info, blocks_meta = EXCLUDED.blocks_meta, updated_at = EXCLUDED.updated_at", chart_key, event_key, json.dumps(rendering_info, ensure_ascii=False), json.dumps(blocks_meta, ensure_ascii=False), datetime.now(timezone.utc))
+        await con.execute("INSERT INTO seat_maps (chart_key, event_key, rendering_info, blocks_meta, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(chart_key) DO UPDATE SET event_key = EXCLUDED.event_key, rendering_info = EXCLUDED.rendering_info, blocks_meta = EXCLUDED.blocks_meta, updated_at = EXCLUDED.updated_at", chart_key, event_key, json.dumps(rendering_info, ensure_ascii=False), json.dumps(blocks_meta, ensure_ascii=False), time.time())
 
 async def get_seat_map(chart_key: str, max_age: float = 86400) -> Optional[dict[str, Any]]:
     async with _conn() as con:
         row = await con.fetchrow("SELECT * FROM seat_maps WHERE chart_key = $1", chart_key)
         if not row: return None
         d = dict(row)
-        if d.get("updated_at"):
-            upd = d["updated_at"]
-            if isinstance(upd, datetime):
-                upd_ts = upd.timestamp()
-            else:
-                upd_ts = float(upd)
-            if (datetime.now(timezone.utc).timestamp() - upd_ts) > max_age:
-                return None
+        if (time.time() - float(d.get("updated_at") or 0)) > max_age: return None
         try:
             d["rendering_info"] = json.loads(d.get("rendering_info") or "{}")
             d["blocks_meta"] = json.loads(d.get("blocks_meta") or "[]")

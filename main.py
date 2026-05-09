@@ -80,6 +80,10 @@ async def lifespan(app: FastAPI):
         await db_core.init_db()
         await settings_core._init_table()
         
+        # V16.5: Automated Schema Synchronization
+        async with db_core.connect() as con:
+            await settings_core.sync_legacy_schema(con)
+        
         notifier = Notifier()
 
         # V13: Start Turnstile prewarm pool early so 5 tokens are ready

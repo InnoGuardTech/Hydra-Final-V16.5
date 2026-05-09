@@ -38,11 +38,41 @@ async def _init_table() -> None:
             CREATE TABLE IF NOT EXISTS settings (
                 key         TEXT PRIMARY KEY,
                 value       TEXT,
-                updated_at  TIMESTAMPTZ
+                updated_at  DOUBLE PRECISION
             );
             """)
     except Exception as e:
         log.error(f"settings table init failed: {e}")
+
+
+async def sync_legacy_schema(con) -> None:
+    """Ensure all required columns exist in the legacy schema."""
+    log.info("Checking for missing columns in legacy schema...")
+    try:
+        # Accounts
+        for col in ["last_error", "proxy", "status", "label", "proxy_url"]:
+            await con.execute(f"ALTER TABLE accounts ADD COLUMN IF NOT EXISTS {col} TEXT")
+        
+        # Events (V12 columns)
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS royal_category TEXT")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS end_date BIGINT DEFAULT 0")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS has_availability INTEGER DEFAULT 1")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS sub_title TEXT")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS venue TEXT")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS first_seen_at DOUBLE PRECISION")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS last_seen_at DOUBLE PRECISION")
+        await con.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS last_checked_at DOUBLE PRECISION")
+
+        # Bookings
+        await con.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_url TEXT")
+        await con.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS total_amount DOUBLE PRECISION")
+        await con.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS currency TEXT")
+        await con.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status TEXT")
+        await con.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_at DOUBLE PRECISION")
+
+        log.info("Schema sync complete.")
+    except Exception as e:
+        log.warning(f"Schema sync encountered issues (non-critical): {e}")
 
 
 async def _refresh_cache() -> None:
