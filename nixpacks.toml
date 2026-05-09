@@ -1,0 +1,2 @@
+[phases.setup]
+nixPkgs = ["python311", "chromium", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "libdrm", "dbus", "libxkbcommon", "mesa", "libX11", "libXcomposite", "libXdamage", "libXext", "libXfixes", "libXrandr", "libgbm"]

@@ -96,6 +96,7 @@ async def harvest_web_session(account_id: str, proxy_url: Optional[str] = None) 
             browser_args.append(f"--proxy-server={proxy_url}")
             
         browser = await uc.start(
+            browser_executable_path="/usr/bin/chromium",
             headless=HEADLESS,
             browser_args=browser_args
         )
