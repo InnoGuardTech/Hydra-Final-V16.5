@@ -112,7 +112,14 @@ async def init_db():
 # ════════════════════════════════════════════════════════════════════════
 def _translate_for_pg(sql: str) -> str:
     s = sql
-    s = s.replace("?", "%s")
+    # Convert '?' placeholders to '$1', '$2', etc. for asyncpg
+    parts = s.split("?")
+    new_sql = ""
+    for i, part in enumerate(parts[:-1]):
+        new_sql += part + f"${i+1}"
+    new_sql += parts[-1]
+    s = new_sql
+
     s = re.sub(r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT",
                "BIGSERIAL PRIMARY KEY", s, flags=re.I)
     s = re.sub(r"\bINSERT\s+OR\s+IGNORE\b\s+INTO", "INSERT INTO", s, flags=re.I)

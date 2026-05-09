@@ -31,29 +31,27 @@ _cache_stamp: float = 0.0
 _CACHE_TTL = 10.0
 
 
-def _init_table() -> None:
+async def _init_table() -> None:
     try:
-        with connect() as con:
-            con.executescript("""
+        async with connect() as con:
+            await con.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key         TEXT PRIMARY KEY,
                 value       TEXT,
-                updated_at  DOUBLE PRECISION
+                updated_at  TIMESTAMPTZ
             );
             """)
     except Exception as e:
         log.error(f"settings table init failed: {e}")
 
 
-_init_table()
-
-
-def _refresh_cache() -> None:
+async def _refresh_cache() -> None:
     global _cache_stamp
     try:
         rows = {}
-        with connect() as con:
-            for r in con.execute("SELECT key, value FROM settings").fetchall():
+        async with connect() as con:
+            # Using $1 format for consistency with asyncpg
+            for r in await con.fetch("SELECT key, value FROM settings"):
                 rows[r["key"]] = r["value"]
         with _lock:
             _cache.clear()
@@ -63,7 +61,7 @@ def _refresh_cache() -> None:
         log.debug(f"settings cache refresh err: {e}")
 
 
-def get(key: str, default: str = "") -> str:
+async def get(key: str, default: str = "") -> str:
     """Read a setting: env → DB → default."""
     env_val = os.environ.get(key)
     if env_val:
@@ -71,71 +69,71 @@ def get(key: str, default: str = "") -> str:
 
     # cache
     if time.time() - _cache_stamp > _CACHE_TTL:
-        _refresh_cache()
+        await _refresh_cache()
 
     with _lock:
         v = _cache.get(key)
     return v if v not in (None, "") else default
 
 
-def set_value(key: str, value: str) -> None:
+async def set_value(key: str, value: str) -> None:
     """Upsert a setting and invalidate cache."""
-    with connect() as con:
-        con.execute("""
-            INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+    async with connect() as con:
+        await con.execute("""
+            INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3)
             ON CONFLICT (key) DO UPDATE SET value = excluded.value,
                                              updated_at = excluded.updated_at
-        """, (key, value, time.time()))
+        """, key, value, time.time())
     global _cache_stamp
     _cache_stamp = 0.0
 
 
-def delete(key: str) -> None:
-    with connect() as con:
-        con.execute("DELETE FROM settings WHERE key = ?", (key,))
+async def delete(key: str) -> None:
+    async with connect() as con:
+        await con.execute("DELETE FROM settings WHERE key = $1", key)
     global _cache_stamp
     _cache_stamp = 0.0
 
 
-def list_all() -> dict[str, str]:
+async def list_all() -> dict[str, str]:
     """Return all keys (DB only, for admin UI; env wins on read)."""
-    _refresh_cache()
+    await _refresh_cache()
     with _lock:
         return dict(_cache)
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Known well-typed getters
+# Known well-typed getters (Async)
 # ════════════════════════════════════════════════════════════════════════
-def telegram_bot_token() -> str:
-    return get("TELEGRAM_BOT_TOKEN", "")
+async def telegram_bot_token() -> str:
+    return await get("TELEGRAM_BOT_TOKEN", "")
 
 
-def telegram_chat_id() -> str:
-    return get("TELEGRAM_CHAT_ID", "")
+async def telegram_chat_id() -> str:
+    return await get("TELEGRAM_CHAT_ID", "")
 
 
-def authorized_chat_ids() -> list[str]:
-    raw = get("AUTHORIZED_CHAT_IDS", "")
+async def authorized_chat_ids() -> list[str]:
+    raw = await get("AUTHORIZED_CHAT_IDS", "")
     ids = [c.strip() for c in raw.split(",") if c.strip()]
-    main = telegram_chat_id()
+    main = await telegram_chat_id()
     if main and main not in ids:
         ids.append(main)
     return ids
 
 
-def webook_public_token() -> str:
-    return get(
+async def webook_public_token() -> str:
+    return await get(
         "WEBOOK_PUBLIC_TOKEN",
         "e9aac1f2f0b6c07d6be070ed14829de684264278359148d6a582ca65a50934d2",
     )
 
 
-def admin_password() -> str:
+async def admin_password() -> str:
     """Password used to open the /admin UI. Change from UI or env."""
-    return get("ADMIN_PASSWORD", "webook-admin")
+    return await get("ADMIN_PASSWORD", "webook-admin")
 
 
 # Fallbacks for PostgreSQL url so we can still bootstrap
-def database_url() -> str:
-    return get("DATABASE_URL", "") or os.environ.get("DATABASE_URL", "")
+async def database_url() -> str:
+    return await get("DATABASE_URL", "") or os.environ.get("DATABASE_URL", "")

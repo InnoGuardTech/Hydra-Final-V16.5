@@ -237,7 +237,7 @@ async def admin_home(wbk_admin: Optional[str] = Cookie(default=None),
                       flash: Optional[str] = None):
     if not _is_authed(wbk_admin):
         return _login_page()
-    return _settings_page(flash or "")
+    return await _settings_page(flash or "")
 
 
 @router.post("/login")
@@ -283,8 +283,8 @@ def _render_value_cell(key: str, value: str, row_id: str) -> str:
 """
 
 
-def _settings_page(flash: str = "") -> HTMLResponse:
-    settings_data = cfg_settings.list_all()
+async def _settings_page(flash: str = "") -> HTMLResponse:
+    settings_data = await cfg_settings.list_all()
     env_overrides = [k for k, _ in KNOWN_SETTINGS if os.environ.get(k)]
 
     shown_keys = set()
@@ -389,10 +389,10 @@ async def admin_set(key: str = Form(...), value: str = Form(""),
         return RedirectResponse(url="/admin/", status_code=303)
     try:
         # strip whitespace but keep inner spaces
-        cfg_settings.set_value(key, value.strip())
+        await cfg_settings.set_value(key, value.strip())
         log.info(f"admin set {key} ({len(value)} chars)")
         # Verify it was actually saved
-        saved = cfg_settings.get(key, None)
+        saved = await cfg_settings.get(key, None)
         if saved != value.strip():
             flash = f"⚠️ {key} — محفوظ لكن القيمة المقروءة مختلفة (قد يكون env يتجاوزها)"
         else:
@@ -409,7 +409,7 @@ async def admin_delete(key: str,
     if not _is_authed(wbk_admin):
         return RedirectResponse(url="/admin/", status_code=303)
     try:
-        cfg_settings.delete(key)
+        await cfg_settings.delete(key)
         flash = f"🗑️ تم حذف {key}"
     except Exception as e:
         flash = f"❌ {e}"
