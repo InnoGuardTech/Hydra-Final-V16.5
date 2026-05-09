@@ -195,6 +195,7 @@ async def count_events_by_royal_category(only_available: bool = True, hide_ended
 # ════════════════════════════════════════════════════════════════════════
 # Bookings, Settings & Watchers
 # ════════════════════════════════════════════════════════════════════════
+async def add_booking(chat_id: str, event_slug: str, event_title: str, ticket_type: str, account_id: str, quantity: int, seat_info: dict, payment_url: str, total_amount: float = 0.0, currency: str = "SAR", status: str = "pending") -> int:
     async with _conn() as con:
         row = await con.fetchrow("INSERT INTO bookings (chat_id, event_slug, event_title, ticket_type, account_id, quantity, seat_info, payment_url, total_amount, currency, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id", chat_id, event_slug, event_title, ticket_type, account_id, quantity, json.dumps(seat_info, ensure_ascii=False), payment_url, total_amount, currency, status, float(time.time()))
         return row["id"]
@@ -211,6 +212,7 @@ async def list_bookings(chat_id: Optional[str] = None, limit: int = 20) -> list[
             out.append(d)
         return out
 
+async def add_drop_watcher(*, chat_id: str, account_id: str, event_slug: str, event_key: str, ticket_type_id: str, quantity: int, blocks_pref: list[str]) -> int:
     async with _conn() as con:
         now_ts = float(time.time())
         row = await con.fetchrow("INSERT INTO drop_watchers (chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, blocks_pref, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'watching', $8, $9) RETURNING id", chat_id, account_id, event_slug, event_key, ticket_type_id, quantity, json.dumps(blocks_pref, ensure_ascii=False), now_ts, now_ts)
