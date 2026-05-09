@@ -34,7 +34,6 @@ from app.core.config import (
     use_stealth_browser,
 )
 from app.core.storage import get_account, save_tokens, set_account_status
-from app.services.login_robust import robust_login as _robust_login
 
 log = logging.getLogger("auth")
 WEBOOK_RECAPTCHA_SITE_KEY = "6LcvYHooAAAAAC-G46bpymJKtIwfDQpg9DsHPMpL"
@@ -79,311 +78,74 @@ def _proxy_config() -> Optional[dict[str, str]]:
         cfg["password"] = proxy_password().strip()
     return cfg
 
-
-async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -> dict[str, Any]:
-    """V15.1 — HTTP-only login via login_robust (curl_cffi + 2Captcha).
-
-    Falls back to the legacy Playwright path ONLY if the robust path
-    fails AND a browser backend is available. The fallback is mainly
-    there for diagnostics; in production the robust path always wins.
-    """
+async def harvest_web_session(account_id: str, proxy_url: Optional[str] = None) -> dict[str, Any]:
+    """Phase 2: The Stealth Harvester using nodriver to bypass Cloudflare."""
+    import nodriver as uc
+    
     acc = await get_account(account_id)
     if not acc:
-        return {"ok": False, "error": "الحساب غير موجود"}
+        return {"ok": False, "error": "Account not found"}
 
-    proxy_url = (acc.get("proxy_url") or "").strip() or None
-    last_error = ""
-
-    # ─── PRIMARY PATH: HTTP-only via login_robust (V15.1) ───
-    for attempt in range(1, max_attempts + 1):
-        log.info(
-            f"🔐 robust(http) login attempt {attempt}/{max_attempts} "
-            f"for {account_id}"
-        )
-        await set_account_status(account_id, "refreshing")
-        try:
-            res = await _robust_login(
-                email=acc["email"],
-                password=acc["password"],
-                captcha_api_key=two_captcha_api_key().strip() or None,
-                proxy_url=proxy_url,
-                prefer="recaptcha",
-                lang=WEBOOK_LANG or "ar",
-            )
-            if res.ok and res.access_token:
-                await save_tokens(
-                    account_id=account_id,
-                    access=res.access_token,
-                    refresh="",
-                    expires_at=res.expires_at
-                        or int(time.time() + 7 * 86400),
-                    user_id=res.user_id,
-                )
-                log.info(
-                    f"✅ robust login OK for {account_id} "
-                    f"(captcha={res.captcha_kind}, "
-                    f"elapsed={res.elapsed_ms:.0f} ms)"
-                )
-                return {
-                    "ok": True,
-                    "tokens": {
-                        "access_token": res.access_token,
-                        "expires_at": res.expires_at,
-                        "user_id": res.user_id,
-                    },
-                    "user": {
-                        "name": res.user_name or "",
-                        "email": acc["email"],
-                    },
-                    "meta": {
-                        "path": "robust_http",
-                        "captcha_kind": res.captcha_kind,
-                        "elapsed_ms": res.elapsed_ms,
-                    },
-                }
-            last_error = res.error or f"robust login failed (http={res.http_status})"
-            log.warning(f"robust login attempt {attempt} failed: {last_error}")
-        except Exception as e:
-            last_error = f"robust login crashed: {str(e)[:200]}"
-            log.exception(f"robust login crashed for {account_id}")
-        if attempt < max_attempts:
-            await asyncio.sleep(2.0)
-
-    # ─── FALLBACK PATH: legacy Playwright (only if available) ───
-    if _playwright_err is None:
-        try:
-            log.info(f"🔀 falling back to Playwright login for {account_id}")
-            result = await _do_login_once(acc["email"], acc["password"])
-            if result.get("ok"):
-                await save_tokens(
-                    account_id=account_id,
-                    access=result["access_token"],
-                    refresh="",
-                    expires_at=result["expires_at"],
-                    user_id=result.get("user_id"),
-                )
-                return {
-                    "ok": True,
-                    "tokens": {
-                        "access_token": result["access_token"],
-                        "expires_at": result["expires_at"],
-                        "user_id": result.get("user_id"),
-                    },
-                    "user": result.get("user") or {},
-                    "meta": {"path": "playwright_fallback"},
-                }
-            last_error = result.get("error", last_error or "غير معروف")
-        except Exception as e:
-            last_error = f"playwright fallback crashed: {str(e)[:200]}"
-            log.exception(f"playwright fallback crashed for {account_id}")
-
-    await set_account_status(account_id, "needs_relogin", last_error[:300])
-    return {"ok": False, "error": last_error}
-
-
-async def _launch_context():
-    browser_args = [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-features=IsolateOrigins,site-per-process",
-    ]
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
+    log.info(f"🌾 Harvesting web session for account {account_id}")
+    await set_account_status(account_id, "harvesting")
+    
+    browser = None
+    try:
+        browser_args = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        if proxy_url:
+            browser_args.append(f"--proxy-server={proxy_url}")
+            
+        browser = await uc.start(
             headless=HEADLESS,
-            args=browser_args,
-            proxy=_proxy_config(),
+            browser_args=browser_args
         )
-        ctx = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/128.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1280, "height": 800},
-            locale="ar-SA",
-            permissions=[],
-        )
+        page = await browser.get(f"{WEBOOK_ORIGIN}/en/login")
+        
+        # Wait for the page to load and Cloudflare challenge to potentially clear
+        await asyncio.sleep(10)
+        
+        # Extract cookies (looking for cf_clearance)
+        cookies = await page.send(uc.cdp.network.get_cookies())
+        cf_clearance = next((c.value for c in cookies if c.name == 'cf_clearance'), None)
+        
+        # Check Local Storage for potential JWTs
+        local_storage = await page.evaluate("() => JSON.stringify(window.localStorage)")
+        storage_data = json.loads(local_storage)
+        
+        # Attempt to find auth token if logged in automatically or from previous session state
+        access_token = storage_data.get("auth_token") or storage_data.get("access_token", "")
+        
+        if access_token and access_token.lower().startswith("bearer "):
+            access_token = access_token[7:].strip()
 
-        async def _route(route):
-            req = route.request
-            url = req.url
-            if req.resource_type in BLOCKED_RESOURCE_TYPES:
-                await route.abort()
-                return
-            if any(d in url for d in BLOCKED_DOMAINS):
-                await route.abort()
-                return
-            await route.continue_()
-
-        await ctx.route("**/*", _route)
-        yield browser, ctx
-        await browser.close()
-
-
-async def _solve_recaptcha_v3_with_2captcha(page_url: str, action: str = "login") -> str:
-    api_key = two_captcha_api_key().strip()
-    if not api_key:
-        return ""
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://2captcha.com/in.php",
-            data={
-                "key": api_key,
-                "method": "userrecaptcha",
-                "version": "v3",
-                "action": action,
-                "googlekey": WEBOOK_RECAPTCHA_SITE_KEY,
-                "pageurl": page_url,
-                "json": 1,
-                "min_score": 0.3,
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            data = await r.json(content_type=None)
-        if data.get("status") != 1:
-            return ""
-        captcha_id = data.get("request")
-        for _ in range(24):
-            await asyncio.sleep(5)
-            async with session.get(
-                "https://2captcha.com/res.php",
-                params={"key": api_key, "action": "get", "id": captcha_id, "json": 1},
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as r:
-                poll = await r.json(content_type=None)
-            if poll.get("status") == 1:
-                return str(poll.get("request") or "")
-            if poll.get("request") not in {"CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"}:
-                break
-    return ""
-
-
-async def _obtain_captcha_token(page) -> str:
-    try:
-        await page.wait_for_function(
-            "() => window.grecaptcha && typeof window.grecaptcha.execute === 'function'",
-            timeout=30000,
-        )
-    except Exception:
-        await page.evaluate(f"""
-          () => new Promise((resolve) => {{
-            if (window.grecaptcha && grecaptcha.execute) return resolve();
-            const s = document.createElement('script');
-            s.src = 'https://www.google.com/recaptcha/api.js?render={WEBOOK_RECAPTCHA_SITE_KEY}';
-            s.onload = () => resolve();
-            s.onerror = () => resolve();
-            document.head.appendChild(s);
-          }})
-        """)
-        try:
-            await page.wait_for_function(
-                "() => window.grecaptcha && typeof window.grecaptcha.execute === 'function'",
-                timeout=15000,
+        if cf_clearance or access_token:
+            log.info(f"✅ Harvest successful for {account_id}: cf_clearance found={bool(cf_clearance)}, token found={bool(access_token)}")
+            
+            # Save the gathered tokens
+            expires_at = _jwt_expiry(access_token) if access_token else (time.time() + 3600)
+            user_id = _jwt_sub(access_token) if access_token else ""
+            
+            await save_tokens(
+                account_id=account_id,
+                access=access_token or "",
+                refresh=cf_clearance or "", # Storing cf_clearance in refresh field temporarily for testing
+                expires_at=expires_at,
+                user_id=user_id
             )
-        except Exception:
-            pass
+            return {"ok": True, "cf_clearance": cf_clearance, "access_token": access_token}
+        else:
+            log.warning(f"⚠️ Harvest yielded no critical tokens for {account_id}")
+            await set_account_status(account_id, "harvest_failed")
+            return {"ok": False, "error": "No tokens extracted."}
+            
+    except Exception as e:
+        log.error(f"❌ Harvester crashed for {account_id}: {e}")
+        await set_account_status(account_id, "error", str(e)[:200])
+        return {"ok": False, "error": str(e)}
+    finally:
+        if browser:
+            await browser.stop()
 
-    token = ""
-    try:
-        token = await page.evaluate(f"""
-          () => new Promise((resolve, reject) => {{
-            if (!(window.grecaptcha && grecaptcha.ready && grecaptcha.execute)) return reject('grecaptcha unavailable');
-            grecaptcha.ready(() => {{
-              grecaptcha.execute('{WEBOOK_RECAPTCHA_SITE_KEY}', {{action: 'login'}}).then(resolve).catch(reject);
-            }});
-          }})
-        """)
-    except Exception:
-        token = ""
-
-    if token and len(str(token)) > 30:
-        return str(token)
-    return await _solve_recaptcha_v3_with_2captcha(f"{WEBOOK_ORIGIN}/en/login", action="login")
-
-
-async def _dismiss_cookies(page) -> None:
-    for _ in range(10):
-        for sel in (
-            "button:has-text('Reject all')",
-            "button:has-text('Accept all')",
-            "button:has-text('Accept')",
-            "button:has-text('قبول')",
-            "button:has-text('موافق')",
-        ):
-            try:
-                btn = await page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    await page.wait_for_timeout(400)
-                    return
-            except Exception:
-                pass
-        await page.wait_for_timeout(300)
-
-
-async def _do_login_once(email: str, password: str) -> dict[str, Any]:
-    async for browser, ctx in _launch_context():
-        page = await ctx.new_page()
-        page.set_default_timeout(60000)
-        page.set_default_navigation_timeout(60000)
-        try:
-            await page.goto(f"{WEBOOK_ORIGIN}/en/login", wait_until="domcontentloaded", timeout=45000)
-            await _dismiss_cookies(page)
-            captcha_token = await _obtain_captcha_token(page)
-            if not captcha_token or len(captcha_token) < 30:
-                raise AuthError("تعذّر الحصول على reCAPTCHA token صالح")
-
-            result = await page.evaluate(f"""
-              async () => {{
-                const r = await fetch('{WEBOOK_API}/login', {{
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: {{
-                    'accept': 'application/json',
-                    'content-type': 'application/json',
-                    'token': '{WEBOOK_PUBLIC_TOKEN}',
-                    'authorization': 'Bearer',
-                    'accept-language': 'ar-SA',
-                  }},
-                  body: JSON.stringify({{
-                    email: {json.dumps(email)},
-                    password: {json.dumps(password)},
-                    captcha: {json.dumps(captcha_token)},
-                    lang: {json.dumps(WEBOOK_LANG)},
-                  }}),
-                }});
-                return {{status: r.status, body: await r.text()}};
-              }}
-            """)
-            try:
-                body = json.loads(result.get("body") or "{}")
-            except Exception:
-                body = {}
-            if result.get("status") != 200 or body.get("status") != "success":
-                err = body.get("error") or body.get("message") or str(result.get("body") or "")[:200]
-                raise AuthError(f"رفض الخادم: {err}")
-
-            data = body.get("data") or {}
-            access_token = data.get("access_token")
-            if not access_token:
-                raise AuthError("الاستجابة لا تحتوي على access_token")
-            return {
-                "ok": True,
-                "access_token": access_token,
-                "expires_at": _jwt_expiry(access_token) or (time.time() + 7 * 86400),
-                "user_id": data.get("_id"),
-                "user": {
-                    "name": data.get("name") or data.get("first_name", ""),
-                    "email": data.get("email", email),
-                },
-            }
-        except (PWTimeout, AuthError) as e:
-            return {"ok": False, "error": str(e)[:260]}
-        except Exception as e:
-            return {"ok": False, "error": f"خطأ داخلي: {str(e)[:220]}"}
 
 
 async def login_with_manual_token(account_id: str, access_token: str) -> dict[str, Any]:
@@ -443,9 +205,9 @@ async def get_valid_bearer(account_id: str, notifier=None, auto_relogin: bool = 
         return token
     if not auto_relogin:
         return token or None
-    res = await login_account(account_id, notifier)
+    res = await harvest_web_session(account_id)
     if res.get("ok"):
-        return res["tokens"]["access_token"]
+        return res.get("access_token")
     return None
 
 

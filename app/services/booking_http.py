@@ -31,30 +31,22 @@ from app.core.config import (
 from app.services.seatsio_client import (
     SeatsioClient, get_hold_token_from_webook,
 )
-from app.services.turnstile_solver import solve_turnstile, invalidate_cache
-from app.services.turnstile_solver import solve_turnstile, invalidate_cache
 from app.services.seatsio_runtime import ensure_event_warm, get_snapshot
 from app.services.block_analyzer import (
     extract_blocks, find_seats_with_fallback, chart_is_sold_out,
 )
-from app.services.login_robust import resolve_public_token
-from app.services.stealth_client import StealthClient
+
 
 log = logging.getLogger("booking_http")
 
 def build_headers(bearer: str, lang: str = "en") -> dict[str, str]:
-    """Headers for the booking hot path.
-
-    V15-final: ``token`` resolves at call time so the bundled fallback
-    (``WEBOOK_PUBLIC_TOKEN_BUILTIN_FALLBACK``) kicks in automatically when
-    the env var is missing or is the read-only 32-char token.
-    """
+    """Headers for the booking hot path."""
     return {
         "accept": "application/json",
         "content-type": "application/json",
         "accept-language": "ar-SA",
         "authorization": f"Bearer {bearer}" if bearer else "Bearer",
-        "token": resolve_public_token(WEBOOK_PUBLIC_TOKEN or ""),
+        "token": WEBOOK_PUBLIC_TOKEN or "",
         "origin": WEBOOK_ORIGIN,
         "referer": f"{WEBOOK_ORIGIN}/",
     }
@@ -65,21 +57,19 @@ def build_headers(bearer: str, lang: str = "en") -> dict[str, str]:
 # relying on local browser automation (Playwright/Patchright).
 
 
-# V15-final: Stealth I/O. Uses the shared or isolated StealthClient.
 async def _stealth_request(
-    cli: StealthClient, method: str, url: str, bearer: str,
+    cli: Any, method: str, url: str, bearer: str,
     *, body: Optional[dict] = None, timeout: float = 15.0,
     cookies: Any = None,
 ) -> tuple[int, Any]:
     try:
-        r = await cli.request(
-            method.upper(), url,
-            headers=build_headers(bearer),
-            json=body, cookies=cookies,
-            timeout=timeout,
-        )
+        headers = build_headers(bearer)
+        if method.upper() == "GET":
+            r = await cli.get(url, headers=headers, cookies=cookies, timeout=timeout)
+        else:
+            r = await cli.post(url, headers=headers, json=body, cookies=cookies, timeout=timeout)
         try:
-            data = await r.json()
+            data = r.json()
         except Exception:
             try:
                 data = {"raw": (r.text or "")[:1200]}
@@ -90,11 +80,11 @@ async def _stealth_request(
         return 0, {"error": str(e)[:200]}
 
 
-async def _get(session: StealthClient, url: str, bearer: str, timeout: int = 15) -> tuple[int, Any]:
+async def _get(session: Any, url: str, bearer: str, timeout: int = 15) -> tuple[int, Any]:
     return await _stealth_request(session, "GET", url, bearer, timeout=float(timeout))
 
 
-async def _post(session: StealthClient, url: str, bearer: str, body: dict, timeout: int = 25) -> tuple[int, Any]:
+async def _post(session: Any, url: str, bearer: str, body: dict, timeout: int = 25) -> tuple[int, Any]:
     return await _stealth_request(
         session, "POST", url, bearer, body=body, timeout=float(timeout),
     )
@@ -668,6 +658,7 @@ async def _reserve_seated_inventory(
 
 async def book_ticket_http(
     *,
+    session: Any,
     bearer: str,
     slug: str,
     ticket_id: str,
@@ -682,6 +673,7 @@ async def book_ticket_http(
     account_email: str = "",
     account_user_id: str = "",
     account_password: str = "",
+    cf_clearance: str = "",
 ) -> dict[str, Any]:
     """Main HTTP booking entry point.
 
@@ -716,13 +708,13 @@ async def book_ticket_http(
         result["fatal"] = True
         return result
 
-    # v9 CRITICAL: Per-account ABSOLUTE ISOLATION.
-    # Each call gets its OWN StealthClient so cookies/state from
-    # one account NEVER bleed into another.
-    async with StealthClient(fingerprint_seed=account_email or "default") as session:
-        result["logs"].append(
-            f"🔒 isolated StealthClient session created"
-        )
+    # Phase 4: Inject cf_clearance into the account's isolated session
+    if cf_clearance:
+        session.cookies.set("cf_clearance", cf_clearance, domain=".webook.com")
+
+    result["logs"].append(f"🛡️ Routed through isolated session with cf_clearance={bool(cf_clearance)}")
+    
+    if True:
         meta = await fetch_event_meta(session, slug, bearer)
         if not meta.get("event_id"):
             result["error"] = "transient:event_meta_unreachable"

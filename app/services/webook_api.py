@@ -20,7 +20,6 @@ import logging
 from typing import Any, Optional
 
 from app.core.config import WEBOOK_API, WEBOOK_LANG, WEBOOK_PUBLIC_TOKEN
-from app.services.login_robust import resolve_public_token
 from app.services.stealth_client import StealthClient
 
 log = logging.getLogger("webook_api")
@@ -45,13 +44,7 @@ BASE_HEADERS: dict[str, str] = {
 
 
 def _resolved_token() -> str:
-    """Resolve the public 'token' header value at call time.
-
-    Honours WEBOOK_PUBLIC_TOKEN_BUILTIN_FALLBACK so /event-detail and
-    /event-ticket-details unblock automatically when the env var is
-    missing or holds the read-only 32-char token.
-    """
-    return resolve_public_token(WEBOOK_PUBLIC_TOKEN or "")
+    return WEBOOK_PUBLIC_TOKEN or ""
 
 
 def _headers(bearer: Optional[str] = None,

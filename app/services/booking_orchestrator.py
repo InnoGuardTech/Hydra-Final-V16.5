@@ -31,21 +31,7 @@ from app.services.booking_http import book_ticket_http
 from app.services.booking_playwright import book_via_browser
 from app.services.distributor import Assignment
 
-# V14: dynamic-secret extraction + HTTP/2 stealth client + per-account proxy.
-# These are imported lazily-friendly so existing modules that import
-# booking_orchestrator do not gain a hard dependency on the new layer.
-try:
-    from app.services.asset_secret_extractor import (
-        get_webook_secrets as _v14_get_secrets,
-        invalidate_cache as _v14_invalidate_secrets,
-    )
-    from app.services.stealth_client import StealthClient as _V14StealthClient
-    _V14_AVAILABLE = True
-except Exception as _e:  # pragma: no cover
-    _v14_get_secrets = None
-    _v14_invalidate_secrets = None
-    _V14StealthClient = None
-    _V14_AVAILABLE = False
+
 
 log = logging.getLogger("booking")
 
@@ -250,7 +236,16 @@ async def _convert_to_watcher(
 # ════════════════════════════════════════════════════════════════════════
 # book_one — single account with smart retry
 # ════════════════════════════════════════════════════════════════════════
-async def book_one(
+async def book_one(*args, **kwargs) -> dict:
+    from app.core.network import session_manager
+    assignment = args[0] if args else kwargs.get("assignment")
+    try:
+        return await _book_one_inner(*args, **kwargs)
+    finally:
+        if assignment:
+            await session_manager.close_session(assignment.account_id)
+
+async def _book_one_inner(
     assignment: Assignment,
     *,
     event_slug: str,
@@ -278,22 +273,10 @@ async def book_one(
 
     label = acc.get("label") or acc.get("email")
 
-    # V14: refresh dynamic Webook secrets (cached 1h). Cheap on hot path.
-    if _V14_AVAILABLE and _v14_get_secrets is not None:
-        try:
-            v14_secrets = await _v14_get_secrets()
-            if v14_secrets and v14_secrets.is_complete():
-                # Best-effort propagation: stash on the assignment object
-                # so booking_http (via attribute lookup) can pick them up
-                # without a breaking signature change.
-                setattr(assignment, "_v14_secrets", v14_secrets.as_dict())
-        except Exception as _se:
-            log.debug("V14 dynamic secret refresh skipped: %s", _se)
-
     # V14: per-account proxy URL (read from accounts.proxy_url).
     proxy_url = (acc.get("proxy_url") or "").strip() or None
     if proxy_url:
-        log.debug("V14 booking %s via proxy=%s",
+        log.debug("booking %s via proxy=%s",
                   assignment.account_id,
                   proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url)
 
@@ -308,6 +291,13 @@ async def book_one(
     last_res: dict = {}
     bearer = ""
     for attempt in range(1, MAX_RETRIES + 1):
+        # Refresh the account explicitly inside the loop to fetch newly harvested cf_clearance
+        acc = await get_account(assignment.account_id)
+        if not acc:
+            break
+            
+        cf_clearance = acc.get("refresh_token") or ""
+        
         # Fresh bearer (auto-relogin on every iteration so expired/blocked
         # tokens get refreshed mid-loop).
         bearer = await auth_service.get_valid_bearer(
@@ -325,7 +315,14 @@ async def book_one(
         else:
             await _p(f"🔄 <code>{label}</code> — إعادة المحاولة {attempt}/{MAX_RETRIES}")
 
+        # Phase 4 Jitter and session retrieval
+        from app.core.network import session_manager
+        proxy_url = (acc.get("proxy_url") or "").strip() or None
+        await asyncio.sleep(random.uniform(0.01, 0.05))
+        session = session_manager.get_session(assignment.account_id, proxy_url)
+
         res = await book_ticket_http(
+            session=session,
             bearer=bearer,
             slug=event_slug,
             ticket_id=ticket_id,
@@ -337,11 +334,21 @@ async def book_one(
             account_email=acc.get("email", "") or "",
             account_user_id=acc.get("user_id", "") or "",
             account_password=acc.get("password", "") or "",
+            cf_clearance=cf_clearance,
         )
         last_res = res
 
         if res.get("ok"):
             break  # success — exit retry loop
+
+        # Fallback Mechanism: 401/403 triggers a quick re-harvest mid-booking
+        err_str = str(res.get("error", "")).lower()
+        if "401" in err_str or "403" in err_str or "cloudflare" in err_str or "forbidden" in err_str or "unauthorized" in err_str:
+            if attempt < MAX_RETRIES:
+                proxy_log = proxy_url.split("@")[-1] if proxy_url and "@" in proxy_url else (proxy_url or "Direct")
+                await _p(f"⚠️ <code>{label}</code> — الجلسة منتهية (Acc: {assignment.account_id}, Proxy: {proxy_log})، جاري تجديدها...")
+                await auth_service.harvest_web_session(assignment.account_id, proxy_url=proxy_url)
+                continue # loop will re-get bearer next iteration
 
         # Decide: retry, watch, or hard-fail
         if _is_chart_truly_full(res):
@@ -436,7 +443,11 @@ async def book_one(
                 bearer = await auth_service.get_valid_bearer(
                     assignment.account_id, notifier=notifier, auto_relogin=True,
                 )
+                proxy_url = (acc.get("proxy_url") or "").strip() or None
+                await asyncio.sleep(random.uniform(0.01, 0.05))
+                session = session_manager.get_session(assignment.account_id, proxy_url)
                 retry_res = await book_ticket_http(
+                    session=session,
                     bearer=bearer or "",
                     slug=event_slug, ticket_id=ticket_id,
                     quantity=assignment.quantity,
@@ -445,6 +456,7 @@ async def book_one(
                     account_email=acc.get("email", "") or "",
                     account_user_id=acc.get("user_id", "") or "",
                     account_password=acc.get("password", "") or "",
+                    cf_clearance=acc.get("refresh_token") or "",
                 )
                 if retry_res.get("ok"):
                     pay_url = retry_res.get("payment_url", "")
@@ -528,6 +540,24 @@ async def book_all_fast_lane(
     backup_blocks: Optional[list[str]] = None,
     payment_method: str = "",
 ) -> list[dict]:
+    # Phase 3: Pre-harvest sessions for all unique accounts before starting the fast lane
+    unique_account_ids = list({a.account_id for a in plan})
+    if progress:
+        await progress(f"🌾 جاري تحضير جلسات المتصفح لـ {len(unique_account_ids)} حساب (Pre-harvesting)...")
+    
+    harvest_sem = asyncio.Semaphore(5)
+    async def _do_harvest(acc_id):
+        async with harvest_sem:
+            try:
+                acc = await get_account(acc_id)
+                proxy = (acc.get("proxy_url") or "").strip() or None if acc else None
+                await auth_service.harvest_web_session(acc_id, proxy_url=proxy)
+            except Exception as e:
+                log.error(f"Pre-harvest failed for {acc_id}: {e}")
+                
+    if unique_account_ids:
+        await asyncio.gather(*[_do_harvest(aid) for aid in unique_account_ids])
+
     sem = asyncio.Semaphore(max(1, concurrency))
     results: list[dict] = []
     notified = set()

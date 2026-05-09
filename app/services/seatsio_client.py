@@ -43,10 +43,8 @@ from urllib.parse import urlencode
 
 import aiohttp  # retained ONLY for WebSocket message-type enums
 
-from app.core.config import WEBOOK_API, WEBOOK_ORIGIN
-from app.services.login_robust import resolve_public_token
+from app.core.config import WEBOOK_API, WEBOOK_ORIGIN, WEBOOK_PUBLIC_TOKEN
 from app.services.seatsio_token_fetcher import ensure_tokens
-from app.services.stealth_client import StealthClient
 
 log = logging.getLogger("seatsio_client")
 
@@ -158,25 +156,20 @@ async def _post_hold_token_once(
         "referer": f"{WEBOOK_ORIGIN}/",
         "authorization": f"Bearer {bearer}",
     }
-    # V15-final: builtin-fallback aware public token
-    try:
-        from app.core.config import webook_public_token
-        headers["token"] = resolve_public_token(webook_public_token() or "")
-    except Exception:
-        headers["token"] = resolve_public_token("")
+    headers["token"] = WEBOOK_PUBLIC_TOKEN or ""
 
     try:
-        # V15-final: stealth POST via curl_cffi (matches Chrome JA3+H2)
-        async with StealthClient(timeout=15.0) as cli:
-            r = await cli.request("POST", url, headers=headers, json=body)
-            meta["http_status"] = r.status_code
+        from app.core.network import session_manager
+        cli = session_manager.get_session("seatsio_anon")
+        r = await cli.post(url, headers=headers, json=body, timeout=15.0)
+        meta["http_status"] = r.status_code
+        try:
+            d = r.json() or {}
+        except Exception:
             try:
-                d = r.json() or {}
+                d = {"raw": (r.text or "")[:500]}
             except Exception:
-                try:
-                    d = {"raw": (r.text or "")[:500]}
-                except Exception:
-                    d = {}
+                d = {}
 
         if isinstance(d, dict) and d.get("errors", {}).get("turnstile"):
             meta["turnstile_required"] = True
@@ -237,45 +230,11 @@ async def get_hold_token_from_webook(
     if token:
         return token, meta
 
-    # If turnstile is required and we're allowed to auto-solve, try up to 2 times
-    if not (meta.get("turnstile_required") and auto_solve_turnstile):
+    # If turnstile is required, we do NOT solve it automatically anymore, as
+    # the Stealth Harvester (nodriver) handles CF upstream.
+    if meta.get("turnstile_required"):
+        log.warning(f"⚠️ Turnstile required for hold-token on {slug}, bypass handled upstream.")
         return None, meta
-
-    try:
-        from app.services.turnstile_solver import solve_turnstile, invalidate_cache
-    except Exception as e:
-        log.warning(f"turnstile_solver unavailable: {e}")
-        return None, meta
-
-    page_url = f"{WEBOOK_ORIGIN}/ar/sa/bur/sports-event/events/{slug}"
-    for attempt in (1, 2):
-        log.info(f"🛡️  auto-solving Turnstile (attempt {attempt}/2) for {slug}")
-        ts_token = await solve_turnstile(
-            page_url, force_refresh=(attempt == 2),
-        )
-        if not ts_token:
-            log.warning("turnstile solver returned empty token")
-            continue
-        meta["turnstile_solved"] = True
-        token, retry_meta = await _post_hold_token_once(
-            slug=slug, event_id=event_id, bearer=bearer,
-            turnstile=ts_token, time_slot_id=time_slot_id,
-        )
-        # Merge retry meta forward
-        meta["http_status"] = retry_meta.get("http_status", meta["http_status"])
-        if retry_meta.get("queued"):
-            meta["queued"] = True
-            meta["waiting_number"] = retry_meta.get("waiting_number")
-            meta["total_in_queue"] = retry_meta.get("total_in_queue")
-        if token:
-            meta["turnstile_required"] = False
-            log.info(f"✅ hold-token acquired after Turnstile bypass")
-            return token, meta
-        if not retry_meta.get("turnstile_required"):
-            # Non-turnstile error — abort retry loop
-            return None, retry_meta
-        # Else: token rejected, force-refresh and try once more
-        invalidate_cache(page_url)
 
     return None, meta
 
@@ -610,26 +569,18 @@ class SeatsioClient:
                 self.workspace_key = tokens.get("workspace_key") or ""
             except Exception:
                 pass
-        # V15-final: stealth session per client instance (curl_cffi)
-        self.session = StealthClient(
-            fingerprint_seed=f"sio:{self.event_key[:16]}",
-            timeout=20.0,
-        )
-        await self.session._ensure_session()
+        from app.core.network import session_manager
+        self.session = session_manager.get_session("seatsio_anon")
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
         if self._ws_task:
             self._ws_task.cancel()
-        if self.session:
-            await self.session.close()
 
     # ── HTTP helpers (V15-final — curl_cffi) ──
     async def _get(self, url: str, *, headers: dict, timeout: int = 15) -> tuple[int, Any]:
         try:
-            r = await self.session.request(
-                "GET", url, headers=headers, timeout=float(timeout),
-            )
+            r = await self.session.get(url, headers=headers, timeout=float(timeout))
             try:
                 d = r.json()
             except Exception:
@@ -645,10 +596,7 @@ class SeatsioClient:
     async def _post(self, url: str, *, headers: dict, body: dict,
                     timeout: int = 15) -> tuple[int, Any]:
         try:
-            r = await self.session.request(
-                "POST", url, headers=headers, json=body,
-                timeout=float(timeout),
-            )
+            r = await self.session.post(url, headers=headers, json=body, timeout=float(timeout))
             try:
                 d = r.json()
             except Exception:
