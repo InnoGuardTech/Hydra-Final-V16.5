@@ -77,7 +77,9 @@ async def lifespan(app: FastAPI):
         # V16.4.1: Initialize Async DB Connection Pool
         from app.core import db as db_core
         from app.core import settings as settings_core
+        from app.core import storage as storage_core
         await db_core.init_db()
+        await storage_core.init_db()
         await settings_core._init_table()
         
         # V16.5: Automated Schema Synchronization

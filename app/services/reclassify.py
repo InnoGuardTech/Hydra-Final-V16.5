@@ -41,14 +41,14 @@ async def reclassify_null_categories(batch_size: int = 100,
 
     while True:
         try:
-            with _conn() as con:
-                rows = con.execute(
+            async with _conn() as con:
+                rows = await con.fetch(
                     "SELECT slug, title, sub_title, category, url "
                     "FROM events "
                     "WHERE royal_category IS NULL OR royal_category = '' "
-                    "LIMIT ?",
-                    (batch_size,),
-                ).fetchall()
+                    "LIMIT $1",
+                    batch_size,
+                )
         except Exception as e:
             log.warning(f"reclassify SELECT failed: {e}")
             return total_updated
@@ -74,10 +74,10 @@ async def reclassify_null_categories(batch_size: int = 100,
                 continue
 
             try:
-                with _conn() as con:
-                    con.execute(
-                        "UPDATE events SET royal_category = ? WHERE slug = ?",
-                        (key, slug),
+                async with _conn() as con:
+                    await con.execute(
+                        "UPDATE events SET royal_category = $1 WHERE slug = $2",
+                        key, slug,
                     )
                 batch_updates += 1
             except Exception as e:
