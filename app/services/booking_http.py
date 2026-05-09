@@ -79,7 +79,7 @@ async def _stealth_request(
             timeout=timeout,
         )
         try:
-            data = r.json()
+            data = await r.json()
         except Exception:
             try:
                 data = {"raw": (r.text or "")[:1200]}

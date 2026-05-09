@@ -654,7 +654,7 @@ async def _show_categories_menu(chat_id: str, msg_id: int,
             await _refresh_events_from_webook()
         except Exception as e:
             log.warning(f"royal refresh err: {e}")
-        counts = count_events_by_royal_category(only_available=True,
+        counts = await count_events_by_royal_category(only_available=True,
                                                   hide_ended=True)
         total_now = sum(counts.values())
 
@@ -1025,7 +1025,7 @@ async def _show_plan(chat_id: str, slug: str, ticket_id: str,
                             reply_markup=kb.back_to_menu())
         return
 
-    accounts = [a for a in list_accounts(status="ready")
+    accounts = [a for a in await list_accounts(status="ready")
                 if a.get("access_token")]
     try:
         plan, meta = distribute(qty, accounts=accounts,
