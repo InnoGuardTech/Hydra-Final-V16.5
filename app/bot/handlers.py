@@ -638,8 +638,8 @@ async def _show_categories_menu(chat_id: str, msg_id: int,
                                  notifier: Notifier,
                                  force_refresh: bool = False) -> None:
     """Royal main category gateway."""
-    counts = count_events_by_royal_category(only_available=True,
-                                              hide_ended=True)
+    counts = await count_events_by_royal_category(only_available=True,
+                                                  hide_ended=True)
     total_now = sum(counts.values())
 
     if force_refresh or total_now == 0:
