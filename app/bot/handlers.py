@@ -1302,15 +1302,16 @@ async def _login_flow(chat_id: str, msg_id: int, acc_id: str,
         f"🤖 <i>يُحلّ reCAPTCHA تلقائياً.</i>",
         reply_markup=None,
     )
-    res = await auth_service.login_account(acc_id, notifier)
+    res = await auth_service.harvest_web_session(acc_id)
     if res.get("ok"):
-        user = res.get("user", {})
-        exp_days = int((res["tokens"]["expires_at"] - time.time()) / 86400)
+        access_token = res.get("access_token") or ""
+        expires_at = auth_service._jwt_expiry(access_token) if access_token else (time.time() + 3600)
+        exp_days = int((expires_at - time.time()) / 86400)
         await notifier.send(
             chat_id,
             f"✅ <b>تم الدخول بنجاح</b>\n\n"
-            f"👤 <b>{user.get('name') or acc['label']}</b>\n"
-            f"📧 {user.get('email', acc['email'])}\n"
+            f"👤 <b>{acc['label']}</b>\n"
+            f"📧 {acc['email']}\n"
             f"🔑 التوكن صالح لمدة: <b>{exp_days} يوم</b>\n\n"
             f"🎉 الحساب جاهز للحجز.",
             reply_markup=kb.accounts_keyboard(await list_accounts()),
