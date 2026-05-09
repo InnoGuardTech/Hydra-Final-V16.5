@@ -133,14 +133,14 @@ async def _on_message(msg: dict, notifier: Notifier) -> None:
         if st.name == "waiting_password":
             email = st.data.get("email", "")
             account_id = "acc_" + uuid.uuid4().hex[:8]
-            upsert_account(account_id, email=email, password=text,
+            await upsert_account(account_id, email=email, password=text,
                            label=email.split("@")[0])
             fsm.clear_state(chat_id)
             await notifier.send(
                 chat_id,
                 f"✅ تمت إضافة الحساب (<code>{email}</code>).\n\n"
                 f"اضغط على الحساب ثم <b>🔐 تسجيل الدخول</b> لتفعيله.",
-                reply_markup=kb.accounts_keyboard(list_accounts()),
+                reply_markup=kb.accounts_keyboard(await list_accounts()),
             )
             return
 
@@ -228,7 +228,7 @@ async def _route(chat_id: str, msg_id: int, data: str,
 
     # Settings
     if data == "settings:menu":
-        current = get_bot_setting("DEFAULT_PAYMENT_METHOD",
+        current = await get_bot_setting("DEFAULT_PAYMENT_METHOD",
                                   default_payment_method())
         await notifier.edit(
             chat_id, msg_id,
@@ -242,7 +242,7 @@ async def _route(chat_id: str, msg_id: int, data: str,
         method = data.split(":", 2)[2]
         if method not in {"credit_card", "apple_pay"}:
             method = "credit_card"
-        set_bot_setting("DEFAULT_PAYMENT_METHOD", method, updated_by=chat_id)
+        await set_bot_setting("DEFAULT_PAYMENT_METHOD", method, updated_by=chat_id)
         await notifier.edit(
             chat_id, msg_id,
             f"✅ تم ضبط طريقة الدفع → "
@@ -314,7 +314,7 @@ async def _route(chat_id: str, msg_id: int, data: str,
     if data == "accounts:list":
         await notifier.edit(
             chat_id, msg_id, "👥 <b>حساباتك</b>",
-            reply_markup=kb.accounts_keyboard(list_accounts())); return
+            reply_markup=kb.accounts_keyboard(await list_accounts())); return
     if data == "acc:add":
         fsm.set_state(chat_id, "waiting_email")
         await notifier.send(chat_id,
@@ -325,9 +325,9 @@ async def _route(chat_id: str, msg_id: int, data: str,
         await _login_flow(chat_id, msg_id, acc_id, notifier); return
     if data.startswith("acc:del:"):
         acc_id = data.split(":", 2)[2]
-        delete_account(acc_id)
+        await delete_account(acc_id)
         await notifier.edit(chat_id, msg_id, "🗑️ تم حذف الحساب.",
-                            reply_markup=kb.accounts_keyboard(list_accounts()))
+                            reply_markup=kb.accounts_keyboard(await list_accounts()))
         return
     if data.startswith("acc:"):
         acc_id = data.split(":", 1)[1]
@@ -452,7 +452,7 @@ async def _start_block_picker(chat_id: str, msg_id: int,
     if rendering_info and not fallback_used:
         try:
             from app.core.storage import save_seat_map
-            save_seat_map(
+            await save_seat_map(
                 chart_key=event_key, event_key=event_key,
                 rendering_info=rendering_info,
                 blocks_meta=[{"name": b["name"], "free": b["free"],
@@ -623,14 +623,14 @@ async def _refresh_events_from_webook() -> int:
     # Step 1: housekeeping — drop expired events from DB.
     try:
         from app.core.storage import purge_ended_events
-        purge_ended_events(grace_seconds=3600)
+        await purge_ended_events(grace_seconds=3600)
     except Exception as e:
         log.debug(f"purge_ended_events: {e}")
     # Step 2: refresh from Webook sitemaps + experience sitemaps.
     slugs = await fetch_event_slugs(max_events=320)
     events = await enrich_all(slugs, concurrency=6)
     for e in events:
-        upsert_event(e["slug"], e)
+        await upsert_event(e["slug"], e)
     return len(events)
 
 

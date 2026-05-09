@@ -87,7 +87,7 @@ async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -
     fails AND a browser backend is available. The fallback is mainly
     there for diagnostics; in production the robust path always wins.
     """
-    acc = get_account(account_id)
+    acc = await get_account(account_id)
     if not acc:
         return {"ok": False, "error": "الحساب غير موجود"}
 
@@ -100,7 +100,7 @@ async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -
             f"🔐 robust(http) login attempt {attempt}/{max_attempts} "
             f"for {account_id}"
         )
-        set_account_status(account_id, "refreshing")
+        await set_account_status(account_id, "refreshing")
         try:
             res = await _robust_login(
                 email=acc["email"],
@@ -111,7 +111,7 @@ async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -
                 lang=WEBOOK_LANG or "ar",
             )
             if res.ok and res.access_token:
-                save_tokens(
+                await save_tokens(
                     account_id=account_id,
                     access=res.access_token,
                     refresh="",
@@ -155,7 +155,7 @@ async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -
             log.info(f"🔀 falling back to Playwright login for {account_id}")
             result = await _do_login_once(acc["email"], acc["password"])
             if result.get("ok"):
-                save_tokens(
+                await save_tokens(
                     account_id=account_id,
                     access=result["access_token"],
                     refresh="",
@@ -177,7 +177,7 @@ async def login_account(account_id: str, notifier=None, max_attempts: int = 2) -
             last_error = f"playwright fallback crashed: {str(e)[:200]}"
             log.exception(f"playwright fallback crashed for {account_id}")
 
-    set_account_status(account_id, "needs_relogin", last_error[:300])
+    await set_account_status(account_id, "needs_relogin", last_error[:300])
     return {"ok": False, "error": last_error}
 
 
@@ -387,7 +387,7 @@ async def _do_login_once(email: str, password: str) -> dict[str, Any]:
 
 
 async def login_with_manual_token(account_id: str, access_token: str) -> dict[str, Any]:
-    acc = get_account(account_id)
+    acc = await get_account(account_id)
     if not acc:
         return {"ok": False, "error": "الحساب غير موجود"}
 
@@ -422,7 +422,7 @@ async def login_with_manual_token(account_id: str, access_token: str) -> dict[st
             return {"ok": False, "error": f"تعذّر التحقق: {e}"}
 
     user_id = _jwt_sub(access_token) or ""
-    save_tokens(account_id=account_id, access=access_token, refresh="", expires_at=expires_at, user_id=user_id)
+    await save_tokens(account_id=account_id, access=access_token, refresh="", expires_at=expires_at, user_id=user_id)
     return {
         "ok": True,
         "tokens": {
@@ -434,7 +434,7 @@ async def login_with_manual_token(account_id: str, access_token: str) -> dict[st
 
 
 async def get_valid_bearer(account_id: str, notifier=None, auto_relogin: bool = True) -> Optional[str]:
-    acc = get_account(account_id)
+    acc = await get_account(account_id)
     if not acc:
         return None
     token = acc.get("access_token") or ""

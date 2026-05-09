@@ -232,7 +232,7 @@ async def _convert_to_watcher(
 ) -> bool:
     blocks_pref = ([primary_block] if primary_block else []) + list(backup_blocks)
     try:
-        add_drop_watcher(
+        await add_drop_watcher(
             chat_id=str(chat_id),
             account_id=account_id,
             event_slug=event_slug,
@@ -270,7 +270,7 @@ async def book_one(
     backup_blocks = backup_blocks or []
     payment_method = payment_method or default_payment_method()
 
-    acc = get_account(assignment.account_id)
+    acc = await get_account(assignment.account_id)
     if not acc:
         return {"ok": False, "account_id": assignment.account_id,
                 "error": "الحساب غير موجود", "fatal": True,
@@ -395,7 +395,7 @@ async def book_one(
         pay_url = res.get("payment_url", "")
         seat_info = res.get("seat_info", {}) or {}
 
-        db_id = add_booking(
+        db_id = await add_booking(
             chat_id=chat_id, event_slug=event_slug, event_title=event_title,
             ticket_type=ticket_title, account_id=assignment.account_id,
             quantity=assignment.quantity, seat_info=seat_info,
@@ -403,7 +403,7 @@ async def book_one(
             total_amount=ticket_price * assignment.quantity,
             currency=currency, status="pending",
         )
-        mark_account_used(assignment.account_id)
+        await mark_account_used(assignment.account_id)
 
         return {
             "ok": True,
@@ -449,7 +449,7 @@ async def book_one(
                 if retry_res.get("ok"):
                     pay_url = retry_res.get("payment_url", "")
                     si = retry_res.get("seat_info", {}) or {}
-                    db_id = add_booking(
+                    db_id = await add_booking(
                         chat_id=chat_id, event_slug=event_slug,
                         event_title=event_title, ticket_type=ticket_title,
                         account_id=assignment.account_id,
@@ -458,7 +458,7 @@ async def book_one(
                         total_amount=ticket_price * assignment.quantity,
                         currency=currency, status="pending",
                     )
-                    mark_account_used(assignment.account_id)
+                    await mark_account_used(assignment.account_id)
                     return {
                         "ok": True, "account_id": assignment.account_id,
                         "label": label, "booking_id": db_id,
