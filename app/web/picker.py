@@ -186,7 +186,7 @@ async def picker_data(session_token: str) -> JSONResponse:
 
         hold_token = ""
         try:
-            accs = list_accounts(status="ready")
+            accs = await list_accounts(status="ready")
             bearer = (accs[0].get("access_token") if accs else "") or ""
             if bearer:
                 async with aiohttp.ClientSession() as s:

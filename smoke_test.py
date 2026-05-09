@@ -109,9 +109,13 @@ tg = summarize_for_telegram(sample_seats)
 assert "<b>" in tg and "<code>" in tg
 
 # 8) Bot settings round-trip
-set_bot_setting("DEFAULT_PAYMENT_METHOD", "credit_card", updated_by="smoke")
-assert get_bot_setting("DEFAULT_PAYMENT_METHOD") == "credit_card"
-all_settings = list_bot_settings()
-assert "DEFAULT_PAYMENT_METHOD" in all_settings
+async def test_settings():
+    await set_bot_setting("DEFAULT_PAYMENT_METHOD", "credit_card", updated_by="smoke")
+    assert await get_bot_setting("DEFAULT_PAYMENT_METHOD") == "credit_card"
+    all_settings = await list_bot_settings()
+    assert "DEFAULT_PAYMENT_METHOD" in all_settings
+
+import asyncio
+asyncio.run(test_settings())
 
 print("SMOKE_OK ✅ — v4 Hydra engine passes all checks")

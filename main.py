@@ -211,9 +211,9 @@ app.include_router(picker_router)
 @app.get("/", response_class=HTMLResponse)
 @app.head("/")
 async def dashboard() -> HTMLResponse:
-    accs = list_accounts()
-    evs = list_recent_events(limit=5)
-    bks = list_bookings(limit=5)
+    accs = await list_accounts()
+    evs = await list_recent_events(limit=5)
+    bks = await list_bookings(limit=5)
     ready = len([a for a in accs if a.get("status") == "ready"])
     return HTMLResponse(f"""
 <!doctype html><html lang="ar" dir="rtl">
@@ -285,13 +285,13 @@ a:hover{{text-decoration:underline}}
 @app.get("/health")
 @app.head("/health")
 async def health():
-    accs = list_accounts()
+    accs = await list_accounts()
     return {
         "status": "ok",
         "version": "4.0.0",
         "accounts_total": len(accs),
         "accounts_ready": sum(1 for a in accs if a.get("status") == "ready"),
-        "events_cached": len(list_recent_events(limit=999)),
+        "events_cached": len(await list_recent_events(limit=999)),
         "storage": db_backend(),
         "persistent": db_is_persistent(),
     }
@@ -305,16 +305,17 @@ async def ping():
 
 @app.get("/stats")
 async def stats():
-    accs = list_accounts()
+    accs = await list_accounts()
     return {
+        "status": "ok",
         "accounts_total": len(accs),
         "accounts_ready": sum(1 for a in accs if a.get("status") == "ready"),
         "accounts_breakdown": {
             s: sum(1 for a in accs if a.get("status") == s)
             for s in ["ready", "new", "refreshing", "needs_relogin", "blocked"]
         },
-        "events_cached": len(list_recent_events(limit=999)),
-        "bookings_total": len(list_bookings(limit=9999)),
+        "events_cached": len(await list_recent_events(limit=999)),
+        "bookings_total": len(await list_bookings(limit=9999)),
         "public_url": PUBLIC_URL,
     }
 

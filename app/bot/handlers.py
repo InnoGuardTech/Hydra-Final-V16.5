@@ -715,7 +715,7 @@ async def _show_events_in_category(chat_id: str, msg_id: int,
             page = 0
 
     royal_filter = None if cat_key == "all" else cat_key
-    events = list_recent_events(
+    events = await list_recent_events(
         limit=200, royal_category=royal_filter,
         only_available=True, hide_ended=True,
     )
@@ -731,7 +731,7 @@ async def _show_events_in_category(chat_id: str, msg_id: int,
             await _refresh_events_from_webook()
         except Exception as e:
             log.warning(f"first-load refresh err: {e}")
-        events = list_recent_events(
+        events = await list_recent_events(
             limit=200, royal_category=royal_filter,
             only_available=True, hide_ended=True,
         )
@@ -960,7 +960,7 @@ async def _ask_quantity(chat_id: str, msg_id: int, slug: str, ticket_id: str,
                             reply_markup=kb.back_to_menu())
         return
 
-    accounts = [a for a in list_accounts(status="ready")
+    accounts = [a for a in await list_accounts(status="ready")
                 if a.get("access_token")]
     price = ticket.get("display_price") or 0
     ccy = kb._ccy(ticket.get("currency") or "SAR")
@@ -1103,7 +1103,7 @@ async def _execute_booking(chat_id: str, msg_id: int,
                             reply_markup=kb.back_to_menu())
         return
 
-    accounts = [a for a in list_accounts(status="ready")
+    accounts = [a for a in await list_accounts(status="ready")
                 if a.get("access_token")]
     try:
         plan, meta = distribute(qty, accounts=accounts,
@@ -1252,7 +1252,7 @@ async def _execute_booking(chat_id: str, msg_id: int,
 
 async def _show_account(chat_id: str, msg_id: int, acc_id: str,
                         notifier: Notifier) -> None:
-    acc = get_account(acc_id)
+    acc = await get_account(acc_id)
     if not acc:
         await notifier.edit(chat_id, msg_id, "الحساب غير موجود.",
                             reply_markup=kb.back_to_menu())
@@ -1288,7 +1288,7 @@ async def _show_account(chat_id: str, msg_id: int, acc_id: str,
 
 async def _login_flow(chat_id: str, msg_id: int, acc_id: str,
                       notifier: Notifier) -> None:
-    acc = get_account(acc_id)
+    acc = await get_account(acc_id)
     if not acc:
         await notifier.edit(chat_id, msg_id, "الحساب غير موجود.",
                             reply_markup=kb.back_to_menu())
@@ -1313,20 +1313,20 @@ async def _login_flow(chat_id: str, msg_id: int, acc_id: str,
             f"📧 {user.get('email', acc['email'])}\n"
             f"🔑 التوكن صالح لمدة: <b>{exp_days} يوم</b>\n\n"
             f"🎉 الحساب جاهز للحجز.",
-            reply_markup=kb.accounts_keyboard(list_accounts()),
+            reply_markup=kb.accounts_keyboard(await list_accounts()),
         )
     else:
         await notifier.send(
             chat_id,
             f"❌ <b>فشل تسجيل الدخول</b>\n\n"
             f"السبب: <code>{(res.get('error') or '')[:200]}</code>",
-            reply_markup=kb.accounts_keyboard(list_accounts()),
+            reply_markup=kb.accounts_keyboard(await list_accounts()),
         )
 
 
 async def _show_bookings(chat_id: str, notifier: Notifier,
                          edit_msg_id: int | None = None) -> None:
-    bks = list_bookings(chat_id=chat_id, limit=10)
+    bks = await list_bookings(chat_id=chat_id, limit=10)
     if not bks:
         txt = "📋 لا توجد حجوزات بعد."
     else:
