@@ -78,74 +78,89 @@ def _proxy_config() -> Optional[dict[str, str]]:
         cfg["password"] = proxy_password().strip()
     return cfg
 
-async def harvest_web_session(account_id: str, proxy_url: Optional[str] = None) -> dict[str, Any]:
-    """Phase 2: The Stealth Harvester using nodriver to bypass Cloudflare."""
-    import nodriver as uc
-    
+
+async def _playwright_login_fallback(account_id: str, proxy_url: Optional[str] = None) -> dict[str, Any]:
+    """Fallback interactive login using the existing Playwright flow.
+
+    This path is used when 2Captcha is not configured or the HTTP login path
+    fails. It performs a real browser login with the stored email/password,
+    then persists the extracted JWT so the account becomes ready immediately.
+    """
     acc = await get_account(account_id)
     if not acc:
-        return {"ok": False, "error": "Account not found"}
+        return {"ok": False, "error": "Account not found", "stage": "account"}
 
-    log.info(f"🌾 Harvesting web session for account {account_id}")
-    await set_account_status(account_id, "harvesting")
-    
-    browser = None
+    email = (acc.get("email") or "").strip()
+    password = (acc.get("password") or "").strip()
+    if not email or not password:
+        await set_account_status(account_id, "needs_relogin", "missing credentials")
+        return {"ok": False, "error": "missing credentials", "stage": "account"}
+
+    from app.services.booking_playwright import _login_with_page
+    from app.services.browser_pool import browser_context
+
+    await set_account_status(account_id, "refreshing")
     try:
-        browser_args = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        if proxy_url:
-            browser_args.append(f"--proxy-server={proxy_url}")
-            
-        browser = await uc.start(
-            browser_executable_path="/usr/bin/google-chrome",
-            headless=True,
-            sandbox=False
-        )
-        page = await browser.get(f"{WEBOOK_ORIGIN}/en/login")
-        
-        # Wait for the page to load and Cloudflare challenge to potentially clear
-        await asyncio.sleep(10)
-        
-        # Extract cookies (looking for cf_clearance)
-        cookies = await page.send(uc.cdp.network.get_cookies())
-        cf_clearance = next((c.value for c in cookies if c.name == 'cf_clearance'), None)
-        
-        # Check Local Storage for potential JWTs
-        local_storage = await page.evaluate("() => JSON.stringify(window.localStorage)")
-        storage_data = json.loads(local_storage)
-        
-        # Attempt to find auth token if logged in automatically or from previous session state
-        access_token = storage_data.get("auth_token") or storage_data.get("access_token", "")
-        
-        if access_token and access_token.lower().startswith("bearer "):
-            access_token = access_token[7:].strip()
+        async with browser_context(label=f"auth:{account_id}", proxy_url=proxy_url) as ctx:
+            page = await ctx.new_page()
+            auth = await _login_with_page(page, email, password)
+            if not auth.get("ok"):
+                err = (auth.get("error") or "login failed")[:300]
+                await set_account_status(account_id, "needs_relogin", err[:200])
+                return {"ok": False, "error": err, "stage": "login"}
 
-        if cf_clearance or access_token:
-            log.info(f"✅ Harvest successful for {account_id}: cf_clearance found={bool(cf_clearance)}, token found={bool(access_token)}")
-            
-            # Save the gathered tokens
-            expires_at = _jwt_expiry(access_token) if access_token else (time.time() + 3600)
-            user_id = _jwt_sub(access_token) if access_token else ""
-            
+            access_token = (auth.get("access_token") or "").strip()
+            user_id = (auth.get("user_id") or _jwt_sub(access_token) or "").strip()
+            if not access_token:
+                err = "no access token returned from browser login"
+                await set_account_status(account_id, "needs_relogin", err)
+                return {"ok": False, "error": err, "stage": "login"}
+
+            cookies = await ctx.cookies([WEBOOK_ORIGIN, f"{WEBOOK_ORIGIN}/en/login"])
+            cf_clearance = ""
+            for c in cookies or []:
+                if (c.get("name") or "") == "cf_clearance":
+                    cf_clearance = (c.get("value") or "").strip()
+                    break
+
+            expires_at = _jwt_expiry(access_token) if access_token else None
             await save_tokens(
                 account_id=account_id,
-                access=access_token or "",
-                refresh=cf_clearance or "", # Storing cf_clearance in refresh field temporarily for testing
-                expires_at=expires_at,
-                user_id=user_id
+                access=access_token,
+                refresh=cf_clearance,
+                expires_at=expires_at or (time.time() + 3600),
+                user_id=user_id,
             )
-            return {"ok": True, "cf_clearance": cf_clearance, "access_token": access_token}
-        else:
-            log.warning(f"⚠️ Harvest yielded no critical tokens for {account_id}")
-            await set_account_status(account_id, "harvest_failed")
-            return {"ok": False, "error": "No tokens extracted."}
-            
+            return {
+                "ok": True,
+                "access_token": access_token,
+                "user_id": user_id,
+                "cf_clearance": cf_clearance,
+                "stage": "browser_login",
+            }
     except Exception as e:
-        log.error(f"❌ Harvester crashed for {account_id}: {e}")
-        await set_account_status(account_id, "error", str(e)[:200])
-        return {"ok": False, "error": str(e)}
-    finally:
-        if browser:
-            await browser.stop()
+        err = f"browser login error: {type(e).__name__}: {e}"
+        log.exception("❌ playwright login fallback failed for %s: %s", account_id, e)
+        await set_account_status(account_id, "error", err[:200])
+        return {"ok": False, "error": err, "stage": "browser_login"}
+
+
+async def harvest_web_session(account_id: str, proxy_url: Optional[str] = None) -> dict[str, Any]:
+    """Try HTTP login first, then fall back to browser login when needed."""
+    api_key = (two_captcha_api_key() or "").strip()
+    if api_key:
+        try:
+            from app.services.login_robust import robust_http_login
+            res = await robust_http_login(account_id)
+            if res.get("ok"):
+                return res
+            log.warning("HTTP login failed for %s; falling back to browser login: %s", account_id, res.get("error"))
+        except Exception as e:
+            log.exception("❌ robust_http_login crashed for %s: %s", account_id, e)
+    else:
+        log.info("2Captcha key not configured; using browser login fallback for %s", account_id)
+
+    return await _playwright_login_fallback(account_id, proxy_url=proxy_url)
 
 
 

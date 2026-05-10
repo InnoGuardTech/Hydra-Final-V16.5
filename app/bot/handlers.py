@@ -1305,8 +1305,10 @@ async def _login_flow(chat_id: str, msg_id: int, acc_id: str,
     res = await auth_service.harvest_web_session(acc_id)
     if res.get("ok"):
         access_token = res.get("access_token") or ""
-        expires_at = auth_service._jwt_expiry(access_token) if access_token else (time.time() + 3600)
-        exp_days = int((expires_at - time.time()) / 86400)
+        expires_at = res.get("expires_at") or (
+            auth_service._jwt_expiry(access_token) if access_token else (time.time() + 3600)
+        )
+        exp_days = max(0, int((float(expires_at) - time.time()) / 86400))
         await notifier.send(
             chat_id,
             f"✅ <b>تم الدخول بنجاح</b>\n\n"
@@ -1317,10 +1319,18 @@ async def _login_flow(chat_id: str, msg_id: int, acc_id: str,
             reply_markup=kb.accounts_keyboard(await list_accounts()),
         )
     else:
+        stage = res.get("stage") or ""
+        stage_lbl = {
+            "captcha": "🧩 حل reCAPTCHA",
+            "login": "🔐 إرسال بيانات الدخول",
+            "verify": "✅ التحقق من التوكن",
+            "lookup": "🔍 قراءة بيانات الحساب",
+        }.get(stage, "")
+        stage_line = f"\nمرحلة: <i>{stage_lbl}</i>" if stage_lbl else ""
         await notifier.send(
             chat_id,
-            f"❌ <b>فشل تسجيل الدخول</b>\n\n"
-            f"السبب: <code>{(res.get('error') or '')[:200]}</code>",
+            f"❌ <b>فشل تسجيل الدخول</b>{stage_line}\n\n"
+            f"السبب: <code>{(res.get('error') or '')[:300]}</code>",
             reply_markup=kb.accounts_keyboard(await list_accounts()),
         )
 

@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
+import shutil
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -204,6 +206,32 @@ def random_context_kwargs(seed: Optional[str] = None) -> dict[str, Any]:
     }
 
 
+def _resolve_chromium_executable() -> Optional[str]:
+    """Prefer a system browser when Playwright bundled browsers are absent.
+
+    Railway images may provide Google Chrome / Chromium system-wide. Using an
+    explicit executable path avoids brittle runtime failures when the bundled
+    Playwright browser is missing.
+    """
+    candidates = [
+        os.getenv("CHROME_PATH", "").strip(),
+        os.getenv("CHROMIUM_PATH", "").strip(),
+        os.getenv("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "").strip(),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        shutil.which("google-chrome") or "",
+        shutil.which("google-chrome-stable") or "",
+        shutil.which("chromium") or "",
+        shutil.which("chromium-browser") or "",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
 # ════════════════════════════════════════════════════════════════════════
 # V14: Selective resource interceptor (the "map fix")
 # ════════════════════════════════════════════════════════════════════════
@@ -342,11 +370,17 @@ class _BrowserSingleton:
                    if proxy_password().strip() else {}),
             }
 
-        self._browser = await self._pw.chromium.launch(
-            headless=HEADLESS,
-            args=list(LAUNCH_ARGS),
+        launch_kwargs: dict[str, Any] = {
+            "headless": HEADLESS,
+            "args": list(LAUNCH_ARGS),
             **proxy_kwargs,
-        )
+        }
+        browser_executable = _resolve_chromium_executable()
+        if browser_executable:
+            launch_kwargs["executable_path"] = browser_executable
+            log.info("🌐 using system chromium executable: %s", browser_executable)
+
+        self._browser = await self._pw.chromium.launch(**launch_kwargs)
         self._last_used = time.time()
         log.info("✅ Chromium singleton ready (selective router enabled, "
                  "global_proxy=%s)", "yes" if proxy_kwargs else "no")
