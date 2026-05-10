@@ -27,9 +27,25 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 
 # ── Server (always env-driven) ──────────────────────────────────────────
-PORT = int(os.getenv("PORT", "10000"))
+PORT = int(os.getenv("PORT", "8080"))
 HOST = os.getenv("HOST", "0.0.0.0")
-PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("PUBLIC_URL", "")
+
+# Resolve PUBLIC_URL from any supported platform variable
+_railway_public = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+_railway_static = os.getenv("RAILWAY_STATIC_URL", "").strip()
+_render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+_explicit = os.getenv("PUBLIC_URL", "").strip()
+
+if _explicit:
+    PUBLIC_URL = _explicit
+elif _render_url:
+    PUBLIC_URL = _render_url
+elif _railway_static:
+    PUBLIC_URL = _railway_static if _railway_static.startswith("http") else f"https://{_railway_static}"
+elif _railway_public:
+    PUBLIC_URL = f"https://{_railway_public}"
+else:
+    PUBLIC_URL = ""
 
 KEEP_ALIVE_ENABLED = os.getenv("KEEP_ALIVE_ENABLED", "true").lower() == "true"
 KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
@@ -131,8 +147,8 @@ def validate_required_secrets() -> None:
         for e in errors:
             sys.stderr.write(f"  • {e}\n")
         sys.stderr.write(
-            "\nFix these in the Render dashboard → Environment, "
-            "then redeploy.\n\n"
+            "\nFix these in your hosting platform's Environment Variables "
+            "(Railway / Render / etc.), then redeploy.\n\n"
         )
         sys.exit(78)
 

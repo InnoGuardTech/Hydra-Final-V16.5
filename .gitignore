@@ -1,32 +1,20 @@
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
 *.egg-info/
-.venv/
-venv/
-
-# Logs & runtime
-logs/*.log
-*.log
-data/*.db
-sessions/*.png
-sessions/*.json
-
-# Env
 .env
 .env.local
-
-# OS
+.venv/
+venv/
+data/
+sessions/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
 .DS_Store
-Thumbs.db
-
-# IDE
 .vscode/
 .idea/
-
-# V13 hardening — never commit test artifacts with embedded secrets
-test_*.py
-*.test.py
-.env
-.env.*
-!.env.example

@@ -1,7 +1,7 @@
 """
 Entry point — FastAPI web server + Telegram bot + background monitors.
 
-Runs on Render's free tier comfortably because:
+Runs on Railway (or any container host) because:
   • single async process
   • zero-browser footprint (curl_cffi impersonation used instead)
   • all hot-path work is async (asyncpg + curl_cffi)
@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 
     # Defer ALL network-dependent startup to a background task so the
     # FastAPI HTTP port opens immediately. This avoids "No open ports
-    # detected" on Render when Telegram or DB slow things down.
+    # detected" on Railway when Telegram or DB slow things down.
     async def _deferred_startup():
         await asyncio.sleep(2)
         

@@ -153,15 +153,14 @@ async def authorized_chat_ids() -> list[str]:
 
 
 async def webook_public_token() -> str:
-    return await get(
-        "WEBOOK_PUBLIC_TOKEN",
-        "e9aac1f2f0b6c07d6be070ed14829de684264278359148d6a582ca65a50934d2",
-    )
+    # No hard-coded fallback — must be supplied via env or admin UI.
+    return await get("WEBOOK_PUBLIC_TOKEN", "")
 
 
 async def admin_password() -> str:
-    """Password used to open the /admin UI. Change from UI or env."""
-    return await get("ADMIN_PASSWORD", "webook-admin")
+    """Password used to open the /admin UI. Must be supplied via env
+    or the admin UI — no insecure default value."""
+    return await get("ADMIN_PASSWORD", "")
 
 
 # Fallbacks for PostgreSQL url so we can still bootstrap
