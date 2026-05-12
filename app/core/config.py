@@ -26,54 +26,38 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+from app.core.config_loader import get_settings, resolve_public_url
+
+_settings = get_settings()
+
 # ── Server (always env-driven) ──────────────────────────────────────────
-PORT = int(os.getenv("PORT", "8080"))
-HOST = os.getenv("HOST", "0.0.0.0")
+PORT = _settings.port
+HOST = _settings.host
+PUBLIC_URL = resolve_public_url(_settings)
 
-# Resolve PUBLIC_URL from any supported platform variable
-_railway_public = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-_railway_static = os.getenv("RAILWAY_STATIC_URL", "").strip()
-_render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
-_explicit = os.getenv("PUBLIC_URL", "").strip()
-
-if _explicit:
-    PUBLIC_URL = _explicit
-elif _render_url:
-    PUBLIC_URL = _render_url
-elif _railway_static:
-    PUBLIC_URL = _railway_static if _railway_static.startswith("http") else f"https://{_railway_static}"
-elif _railway_public:
-    PUBLIC_URL = f"https://{_railway_public}"
-else:
-    PUBLIC_URL = ""
-
-KEEP_ALIVE_ENABLED = os.getenv("KEEP_ALIVE_ENABLED", "true").lower() == "true"
-KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
+KEEP_ALIVE_ENABLED = _settings.keep_alive_enabled
+KEEP_ALIVE_INTERVAL = _settings.keep_alive_interval
 
 # ── Webook API ──────────────────────────────────────────────────────────
 WEBOOK_ORIGIN = "https://webook.com"
 WEBOOK_API = "https://api.webook.com/api/v2"
-WEBOOK_LANG = os.getenv("WEBOOK_LANG", "ar")
+WEBOOK_LANG = _settings.webook_lang
 
 # ── Monitoring ─────────────────────────────────────────────────────────
-EVENT_POLL_INTERVAL = int(os.getenv("EVENT_POLL_INTERVAL", "300"))
+EVENT_POLL_INTERVAL = _settings.event_poll_interval
 
-LOGIN_CAPTCHA_TIMEOUT = int(os.getenv("LOGIN_CAPTCHA_TIMEOUT", "180"))
-TOKEN_REFRESH_MARGIN = int(os.getenv("TOKEN_REFRESH_MARGIN", "300"))
+LOGIN_CAPTCHA_TIMEOUT = _settings.login_captcha_timeout
+TOKEN_REFRESH_MARGIN = _settings.token_refresh_margin
 
 # ── Paths ──────────────────────────────────────────────────────────────
-DATA_DIR = os.getenv("DATA_DIR", "data")
-DB_PATH = os.getenv("DB_PATH", f"{DATA_DIR}/webook_bot.db")
-SESSIONS_DIR = os.getenv("SESSIONS_DIR", "sessions")
-LOGS_DIR = os.getenv("LOGS_DIR", "logs")
-LOG_FILE = os.getenv("LOG_FILE", f"{LOGS_DIR}/webook_bot.log")
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+DATA_DIR = _settings.data_dir
+DB_PATH = _settings.db_path
+SESSIONS_DIR = _settings.sessions_dir
+LOGS_DIR = _settings.logs_dir
+LOG_FILE = _settings.log_file
+LOG_LEVEL = _settings.log_level
 
-HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
-
-for _d in (DATA_DIR, SESSIONS_DIR, LOGS_DIR):
-    os.makedirs(_d, exist_ok=True)
-
+HEADLESS = _settings.headless
 
 # ════════════════════════════════════════════════════════════════════════
 # Secrets & Configs

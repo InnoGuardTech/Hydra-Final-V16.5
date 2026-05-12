@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  hydra:
+    image: hydra-final:16.5
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - hydra_data:/app/data
+      - hydra_logs:/app/logs
+      - hydra_sessions:/app/sessions
+
+volumes:
+  hydra_data:
+  hydra_logs:
+  hydra_sessions:
