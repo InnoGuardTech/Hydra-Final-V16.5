@@ -10,6 +10,7 @@ from typing import Any, Optional
 import aiohttp
 
 from app.core.config import telegram_bot_token as _bot_token
+from app.core.observability import mark_operation, traced_operation
 
 log = logging.getLogger("tg")
 
@@ -35,16 +36,19 @@ class Notifier:
         url = f"{self.base}/{method}"
         for attempt in range(retries + 1):
             try:
-                async with aiohttp.ClientSession() as s:
-                    async with s.post(
-                        url, json=payload,
-                        timeout=aiohttp.ClientTimeout(total=20),
-                    ) as r:
-                        data = await r.json(content_type=None)
-                        if data.get("ok"):
-                            return data
-                        log.warning(f"TG {method} error: {data}")
+                with traced_operation("telegram.api_call", method=method):
+                    async with aiohttp.ClientSession() as s:
+                        async with s.post(
+                            url, json=payload,
+                            timeout=aiohttp.ClientTimeout(total=20),
+                        ) as r:
+                            data = await r.json(content_type=None)
+                            if data.get("ok"):
+                                mark_operation("queue", "telegram_call", "ok")
+                                return data
+                            log.warning(f"TG {method} error: {data}")
             except Exception as e:
+                mark_operation("queue", "telegram_call", "error")
                 log.debug(f"TG {method} attempt {attempt+1}: {e}")
                 await asyncio.sleep(1 + attempt)
         return None

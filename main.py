@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.responses import Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.logging_setup import setup_logging
@@ -39,6 +40,10 @@ from app.services.perf_cache import (
     close_shared_session, turnstile_pool,
 )
 from app.services.browser_pool import shutdown_browser_singleton
+from app.services.stealth.manager import StealthManager
+from app.api.middleware.observability import ObservabilityMiddleware
+from app.core.config_loader import get_settings
+from app.core.observability import capture_exception, metrics_response, setup_sentry, setup_tracing
 
 # V13: Mandatory secret validation — hard-fail if ADMIN_PASSWORD or
 # WEBOOK_PUBLIC_TOKEN are missing or use a forbidden default value.
@@ -59,7 +64,15 @@ def spawn_protected(coro, *, name: str | None = None) -> asyncio.Task:
     """
     task = asyncio.create_task(coro, name=name)
     _active_tasks.add(task)
-    task.add_done_callback(_active_tasks.discard)
+    def _done(t: asyncio.Task) -> None:
+        _active_tasks.discard(t)
+        try:
+            err = t.exception()
+            if err:
+                capture_exception(err)
+        except Exception:
+            pass
+    task.add_done_callback(_done)
     return task
 
 
@@ -71,6 +84,8 @@ async def lifespan(app: FastAPI):
     # Defer ALL network-dependent startup to a background task so the
     # FastAPI HTTP port opens immediately. This avoids "No open ports
     # detected" on Railway when Telegram or DB slow things down.
+    stealth_manager = StealthManager()
+
     async def _deferred_startup():
         await asyncio.sleep(2)
         
@@ -87,6 +102,11 @@ async def lifespan(app: FastAPI):
             await settings_core.sync_legacy_schema(con)
         
         notifier = Notifier()
+        try:
+            _ = stealth_manager.contexts
+            log.info("stealth manager initialized")
+        except Exception as e:
+            log.warning(f"stealth manager init issue: {e}")
 
         # V13: Start Turnstile prewarm pool early so 5 tokens are ready
         # by the time the first booking fires.
@@ -213,6 +233,9 @@ app = FastAPI(
 )
 app.include_router(admin_router)
 app.include_router(picker_router)
+app.add_middleware(ObservabilityMiddleware)
+_obs_tracing_enabled = setup_tracing(app)
+_obs_sentry_enabled = setup_sentry()
 
 
 # ── HTML dashboard ───────────────────────────────────────────────────────
@@ -291,18 +314,28 @@ a:hover{{text-decoration:underline}}
 
 
 @app.get("/health")
-@app.head("/health")
-async def health():
-    accs = await list_accounts()
-    return {
+async def health() -> JSONResponse:
+    settings = get_settings()
+    payload = {
         "status": "ok",
-        "version": "4.0.0",
-        "accounts_total": len(accs),
-        "accounts_ready": sum(1 for a in accs if a.get("status") == "ready"),
-        "events_cached": len(await list_recent_events(limit=999)),
-        "storage": db_backend(),
-        "persistent": db_is_persistent(),
+        "runtime_mode": "api",
+        "storage": db_backend() if callable(db_backend) else db_backend,
+        "persistent": db_is_persistent() if callable(db_is_persistent) else db_is_persistent,
+        "observability": {
+            "metrics_enabled": settings.metrics_enabled,
+            "tracing_enabled": _obs_tracing_enabled,
+            "sentry_enabled": _obs_sentry_enabled,
+        },
+        "service": settings.service_name,
+        "environment": settings.environment,
+        "version": settings.app_version,
     }
+    return JSONResponse(payload)
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    body, ctype = metrics_response()
+    return Response(content=body, media_type=ctype)
 
 
 @app.get("/ping")

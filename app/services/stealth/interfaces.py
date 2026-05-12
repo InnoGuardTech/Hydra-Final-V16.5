@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+
+class BrowserContextProtocol(Protocol):
+    async def new_page(self) -> Any: ...
+    async def close(self) -> None: ...
+
+
+class BrowserBackendProtocol(Protocol):
+    name: str
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+    async def new_context(self, **kwargs: Any) -> BrowserContextProtocol: ...

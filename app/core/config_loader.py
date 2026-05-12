@@ -1,0 +1,89 @@
+"""Centralized environment-backed configuration."""
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    port: int = Field(8080, alias="PORT")
+    host: str = Field("0.0.0.0", alias="HOST")
+    public_url: str = Field("", alias="PUBLIC_URL")
+    railway_public_domain: str = Field("", alias="RAILWAY_PUBLIC_DOMAIN")
+    railway_static_url: str = Field("", alias="RAILWAY_STATIC_URL")
+    render_external_url: str = Field("", alias="RENDER_EXTERNAL_URL")
+
+    keep_alive_enabled: bool = Field(True, alias="KEEP_ALIVE_ENABLED")
+    keep_alive_interval: int = Field(600, alias="KEEP_ALIVE_INTERVAL")
+
+    webook_lang: str = Field("ar", alias="WEBOOK_LANG")
+    event_poll_interval: int = Field(300, alias="EVENT_POLL_INTERVAL")
+    login_captcha_timeout: int = Field(180, alias="LOGIN_CAPTCHA_TIMEOUT")
+    token_refresh_margin: int = Field(300, alias="TOKEN_REFRESH_MARGIN")
+
+    data_dir: str = Field("data", alias="DATA_DIR")
+    db_path: str = Field("data/webook_bot.db", alias="DB_PATH")
+    sessions_dir: str = Field("sessions", alias="SESSIONS_DIR")
+    logs_dir: str = Field("logs", alias="LOGS_DIR")
+    log_file: str = Field("logs/webook_bot.log", alias="LOG_FILE")
+    log_level: str = Field("INFO", alias="LOG_LEVEL")
+    headless: bool = Field(True, alias="HEADLESS")
+
+    service_name: str = Field("hydra-final", alias="SERVICE_NAME")
+    environment: str = Field("production", alias="ENVIRONMENT")
+    app_version: str = Field("16.5.0", alias="APP_VERSION")
+
+    metrics_enabled: bool = Field(True, alias="METRICS_ENABLED")
+    tracing_enabled: bool = Field(False, alias="TRACING_ENABLED")
+    sentry_enabled: bool = Field(False, alias="SENTRY_ENABLED")
+    sentry_dsn: str = Field("", alias="SENTRY_DSN")
+    otlp_endpoint: str = Field("", alias="OTLP_ENDPOINT")
+    json_logging: bool = Field(False, alias="JSON_LOGGING")
+
+    browser_backend: str = Field("playwright", alias="BROWSER_BACKEND")
+    browser_max_contexts: int = Field(4, alias="BROWSER_MAX_CONTEXTS")
+    browser_startup_timeout: int = Field(30, alias="BROWSER_STARTUP_TIMEOUT")
+    browser_shutdown_timeout: int = Field(15, alias="BROWSER_SHUTDOWN_TIMEOUT")
+    browser_retry_attempts: int = Field(3, alias="BROWSER_RETRY_ATTEMPTS")
+    browser_pool_cleanup_seconds: int = Field(300, alias="BROWSER_POOL_CLEANUP_SECONDS")
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> AppSettings:
+    settings = AppSettings()
+    for directory in (settings.data_dir, settings.sessions_dir, settings.logs_dir):
+        Path(directory).mkdir(parents=True, exist_ok=True)
+    return settings
+
+
+def resolve_public_url(settings: AppSettings) -> str:
+    if settings.public_url:
+        return settings.public_url
+    if settings.render_external_url:
+        return settings.render_external_url
+    if settings.railway_static_url:
+        if settings.railway_static_url.startswith("http"):
+            return settings.railway_static_url
+        return f"https://{settings.railway_static_url}"
+    if settings.railway_public_domain:
+        return f"https://{settings.railway_public_domain}"
+    return ""
+
+
+def load_yaml_overrides() -> dict[str, str]:
+    path = os.getenv("APP_CONFIG_YAML", "")
+    if not path:
+        return {}
+    try:
+        import yaml  # type: ignore
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+            return {str(k).upper(): str(v) for k, v in data.items() if v is not None}
+    except Exception:
+        return {}
