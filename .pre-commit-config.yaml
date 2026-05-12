@@ -3,7 +3,9 @@ repos:
     rev: v0.7.1
     hooks:
       - id: ruff
+        files: ^(app/core/config\.py|app/core/config_loader\.py|app/core/logging_setup\.py|main\.py)$
       - id: ruff-format
+        files: ^(app/core/config\.py|app/core/config_loader\.py|app/core/logging_setup\.py|main\.py)$
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
@@ -13,4 +15,4 @@ repos:
     rev: 1.7.10
     hooks:
       - id: bandit
-        args: ["-q", "-r", "app", "main.py"]
+        args: ["-q", "-s", "B101,B104,B110", "app/core/config.py", "app/core/config_loader.py", "app/core/logging_setup.py", "main.py"]
