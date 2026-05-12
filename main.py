@@ -293,13 +293,8 @@ a:hover{{text-decoration:underline}}
 @app.get("/health")
 @app.head("/health")
 async def health():
-    accs = await list_accounts()
     return {
         "status": "ok",
-        "version": "4.0.0",
-        "accounts_total": len(accs),
-        "accounts_ready": sum(1 for a in accs if a.get("status") == "ready"),
-        "events_cached": len(await list_recent_events(limit=999)),
         "storage": db_backend(),
         "persistent": db_is_persistent(),
     }
