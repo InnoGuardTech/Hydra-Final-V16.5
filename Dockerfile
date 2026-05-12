@@ -1,13 +1,22 @@
-# Hydra Final V16.5 — Railway-ready Dockerfile
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.11-slim AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    PIP_NO_CACHE_DIR=1
+
+RUN pip install --no-cache-dir poetry==2.1.4
+WORKDIR /app
+COPY pyproject.toml poetry.lock* ./
+RUN poetry install --only main --no-interaction --no-ansi
+
+FROM python:3.11-slim AS runtime
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive
 
-# System deps + Google Chrome (for nodriver/playwright stealth)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         wget gnupg ca-certificates curl unzip \
         fonts-liberation libnss3 libxss1 libasound2 libatk-bridge2.0-0 \
@@ -21,15 +30,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
+COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
 
-# Railway injects $PORT at runtime; default to 8080 for local
 ENV PORT=8080
 EXPOSE 8080
-
-# Use shell form so $PORT expands at runtime
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
